@@ -88,6 +88,7 @@ import com.google.ai.edge.gallery.ui.modelmanager.ModelInitializationStatusType
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManager
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
 import com.google.ai.edge.gallery.ui.notifications.NotificationsScreen
+import com.google.ai.edge.gallery.ui.server.PhoneOpenAiServerScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -99,6 +100,7 @@ private const val ROUTE_MODEL = "route_model"
 private const val ROUTE_BENCHMARK = "benchmark"
 private const val ROUTE_MODEL_MANAGER = "model_manager"
 private const val ROUTE_NOTIFICATIONS = "notifications"
+private const val ROUTE_PHONE_SERVER = "phone_server"
 private const val ENTER_ANIMATION_DURATION_MS = 500
 private val ENTER_ANIMATION_EASING = EaseOutExpo
 private const val ENTER_ANIMATION_DELAY_MS = 100
@@ -212,6 +214,7 @@ fun GalleryNavHost(
               )
             },
             onModelsClicked = { navController.navigate(ROUTE_MODEL_MANAGER) },
+            onHttpServerClicked = { navController.navigate(ROUTE_PHONE_SERVER) },
             onNotificationsClicked = { navController.navigate(ROUTE_NOTIFICATIONS) },
             gm4 = true,
           )
@@ -296,12 +299,33 @@ fun GalleryNavHost(
 
     // Model page.
     composable(
-      route = "$ROUTE_MODEL/{taskId}/{modelName}?query={query}",
+      route =
+        "$ROUTE_MODEL/{taskId}/{modelName}?query={query}&server={server}&server_token={server_token}&allow_lan_no_auth={allow_lan_no_auth}&no_auth_subnet={no_auth_subnet}",
       arguments =
         listOf(
           navArgument("taskId") { type = NavType.StringType },
           navArgument("modelName") { type = NavType.StringType },
           navArgument("query") {
+            type = NavType.StringType
+            nullable = true
+            defaultValue = null
+          },
+          navArgument("server") {
+            type = NavType.StringType
+            nullable = true
+            defaultValue = null
+          },
+          navArgument("server_token") {
+            type = NavType.StringType
+            nullable = true
+            defaultValue = null
+          },
+          navArgument("allow_lan_no_auth") {
+            type = NavType.StringType
+            nullable = true
+            defaultValue = null
+          },
+          navArgument("no_auth_subnet") {
             type = NavType.StringType
             nullable = true
             defaultValue = null
@@ -313,6 +337,10 @@ fun GalleryNavHost(
       val modelName = backStackEntry.arguments?.getString("modelName") ?: ""
       val taskId = backStackEntry.arguments?.getString("taskId") ?: ""
       val queryParam = backStackEntry.arguments?.getString("query")
+      val serverParam = backStackEntry.arguments?.getString("server")
+      val serverTokenParam = backStackEntry.arguments?.getString("server_token")
+      val allowLanNoAuthParam = backStackEntry.arguments?.getString("allow_lan_no_auth")
+      val noAuthSubnetParam = backStackEntry.arguments?.getString("no_auth_subnet")
       val scope = rememberCoroutineScope()
       val context = LocalContext.current
 
@@ -335,6 +363,12 @@ fun GalleryNavHost(
                     navController.navigateUp()
                   },
                   initialQuery = queryParam,
+                  autoStartServer = serverParam == "1" || serverParam.equals("true", ignoreCase = true),
+                  serverToken = serverTokenParam,
+                  allowLanNoAuth =
+                    allowLanNoAuthParam == "1" ||
+                      allowLanNoAuthParam.equals("true", ignoreCase = true),
+                  lanNoAuthSubnetCidr = noAuthSubnetParam.orEmpty(),
                 )
             )
           } else {
@@ -429,6 +463,22 @@ fun GalleryNavHost(
       )
     }
 
+    // Phone HTTP server page.
+    composable(
+      route = ROUTE_PHONE_SERVER,
+      enterTransition = { slideUpEnter() },
+      exitTransition = { slideDownExit() },
+    ) {
+      PhoneOpenAiServerScreen(
+        modelManagerViewModel = modelManagerViewModel,
+        navigateUp = {
+          enableHomeScreenAnimation = false
+          navController.navigateUp()
+        },
+        modifier = modifier,
+      )
+    }
+
     // Notifications page.
     composable(
       route = ROUTE_NOTIFICATIONS,
@@ -474,12 +524,34 @@ fun GalleryNavHost(
         val taskId = data.pathSegments.get(data.pathSegments.size - 2)
         val modelName = data.pathSegments.last()
         val queryStr = data.getQueryParameter("query")
+        val serverStr = data.getQueryParameter("server")
+        val serverTokenStr = data.getQueryParameter("server_token")
+        val allowLanNoAuthStr = data.getQueryParameter("allow_lan_no_auth")
+        val noAuthSubnetStr = data.getQueryParameter("no_auth_subnet")
         modelManagerViewModel.getModelByName(name = modelName)?.let { model ->
           val route =
-            if (!queryStr.isNullOrEmpty()) {
-              "$ROUTE_MODEL/${taskId}/${model.name}?query=${Uri.encode(queryStr)}"
-            } else {
-              "$ROUTE_MODEL/${taskId}/${model.name}"
+            buildString {
+              append("$ROUTE_MODEL/${taskId}/${model.name}")
+              val params = mutableListOf<String>()
+              if (!queryStr.isNullOrEmpty()) {
+                params.add("query=${Uri.encode(queryStr)}")
+              }
+              if (!serverStr.isNullOrEmpty()) {
+                params.add("server=${Uri.encode(serverStr)}")
+              }
+              if (!serverTokenStr.isNullOrEmpty()) {
+                params.add("server_token=${Uri.encode(serverTokenStr)}")
+              }
+              if (!allowLanNoAuthStr.isNullOrEmpty()) {
+                params.add("allow_lan_no_auth=${Uri.encode(allowLanNoAuthStr)}")
+              }
+              if (!noAuthSubnetStr.isNullOrEmpty()) {
+                params.add("no_auth_subnet=${Uri.encode(noAuthSubnetStr)}")
+              }
+              if (params.isNotEmpty()) {
+                append("?")
+                append(params.joinToString("&"))
+              }
             }
           navController.navigate(route)
         }
@@ -493,6 +565,10 @@ fun GalleryNavHost(
       val host = data.host
       if (host != null) {
         val queryStr = data.getQueryParameter("query")
+        val serverStr = data.getQueryParameter("server")
+        val serverTokenStr = data.getQueryParameter("server_token")
+        val allowLanNoAuthStr = data.getQueryParameter("allow_lan_no_auth")
+        val noAuthSubnetStr = data.getQueryParameter("no_auth_subnet")
         val task = modelManagerUiState.tasks.find { it.id == host }
         if (task != null) {
           // Pick the first successfully downloaded model or the default active model for this task
@@ -504,10 +580,28 @@ fun GalleryNavHost(
 
           if (defaultModel != null) {
             val route =
-              if (!queryStr.isNullOrEmpty()) {
-                "$ROUTE_MODEL/${task.id}/${defaultModel.name}?query=${Uri.encode(queryStr)}"
-              } else {
-                "$ROUTE_MODEL/${task.id}/${defaultModel.name}"
+              buildString {
+                append("$ROUTE_MODEL/${task.id}/${defaultModel.name}")
+                val params = mutableListOf<String>()
+                if (!queryStr.isNullOrEmpty()) {
+                  params.add("query=${Uri.encode(queryStr)}")
+                }
+                if (!serverStr.isNullOrEmpty()) {
+                  params.add("server=${Uri.encode(serverStr)}")
+                }
+                if (!serverTokenStr.isNullOrEmpty()) {
+                  params.add("server_token=${Uri.encode(serverTokenStr)}")
+                }
+                if (!allowLanNoAuthStr.isNullOrEmpty()) {
+                  params.add("allow_lan_no_auth=${Uri.encode(allowLanNoAuthStr)}")
+                }
+                if (!noAuthSubnetStr.isNullOrEmpty()) {
+                  params.add("no_auth_subnet=${Uri.encode(noAuthSubnetStr)}")
+                }
+                if (params.isNotEmpty()) {
+                  append("?")
+                  append(params.joinToString("&"))
+                }
               }
             navController.navigate(route)
           } else {

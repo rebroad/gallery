@@ -45,6 +45,7 @@ import com.google.ai.edge.gallery.data.ModelAllowlist
 import com.google.ai.edge.gallery.data.ModelCapability
 import com.google.ai.edge.gallery.data.ModelDownloadStatus
 import com.google.ai.edge.gallery.data.ModelDownloadStatusType
+import com.google.ai.edge.gallery.data.SharedModelStorage
 import com.google.ai.edge.gallery.data.NumberSliderConfig
 import com.google.ai.edge.gallery.data.RuntimeType
 import com.google.ai.edge.gallery.data.SOC
@@ -53,10 +54,22 @@ import com.google.ai.edge.gallery.data.TMP_FILE_EXT
 import com.google.ai.edge.gallery.data.Task
 import com.google.ai.edge.gallery.data.ValueType
 import com.google.ai.edge.gallery.data.createLlmChatConfigs
+import com.google.ai.edge.gallery.data.createModelFromImportedModelInfo
 import com.google.ai.edge.gallery.proto.AccessTokenData
 import com.google.ai.edge.gallery.proto.ImportedModel
 import com.google.ai.edge.gallery.proto.Theme
 import com.google.ai.edge.gallery.runtime.aicore.AICoreModelHelper
+import com.google.ai.edge.gallery.server.ACTIVE_MODEL_SECRET_KEY
+import com.google.ai.edge.gallery.server.PHONE_SERVER_AUTO_START_SECRET_KEY
+import com.google.ai.edge.gallery.server.PHONE_SERVER_BIND_ADDRESS_SECRET_KEY
+import com.google.ai.edge.gallery.server.PHONE_SERVER_HTTP_SESSION_IDLE_TIMEOUT_MINUTES_SECRET_KEY
+import com.google.ai.edge.gallery.server.PHONE_SERVER_MAX_CACHED_HTTP_SESSIONS_SECRET_KEY
+import com.google.ai.edge.gallery.server.PHONE_SERVER_PORT_SECRET_KEY
+import com.google.ai.edge.gallery.server.PHONE_SERVER_STATEFUL_HTTP_RESPONSES_SECRET_KEY
+import com.google.ai.edge.gallery.server.PhoneOpenAiServerAutoStartMode
+import com.google.ai.edge.gallery.server.PhoneOpenAiServerStore
+import com.google.ai.edge.gallery.server.loadPhoneOpenAiServerSettings
+import com.google.ai.edge.gallery.server.listBindableLanAddresses
 import com.google.ai.edge.litertlm.Contents
 import com.google.gson.Gson
 import com.google.gson.JsonSyntaxException
@@ -200,6 +213,7 @@ constructor(
   @ApplicationContext private val context: Context,
 ) : ViewModel() {
   private val externalFilesDir = context.getExternalFilesDir(null)
+  private val sharedModelStorageDir = SharedModelStorage.sharedRootDir()
   protected val _uiState = MutableStateFlow(createEmptyUiState())
   open val uiState = _uiState.asStateFlow()
 
@@ -209,6 +223,25 @@ constructor(
 
   val authService = AuthorizationService(context)
   var curAccessToken: String = ""
+
+  init {
+    loadPhoneOpenAiServerSettings(dataStoreRepository)
+    viewModelScope.launch(Dispatchers.Default) {
+      PhoneOpenAiServerStore.state.collect { serverState ->
+        val modelName = serverState.modelName
+        if (modelName.isBlank()) {
+          return@collect
+        }
+        val currentSelected = uiState.value.selectedModel
+        if (currentSelected.name == modelName) {
+          return@collect
+        }
+        val model = getModelByName(modelName) ?: return@collect
+        _uiState.update { it.copy(selectedModel = model) }
+        dataStoreRepository.saveSecret(ACTIVE_MODEL_SECRET_KEY, model.name)
+      }
+    }
+  }
 
   override fun onCleared() {
     authService.dispose()
@@ -284,7 +317,110 @@ constructor(
   fun selectModel(model: Model) {
     if (_uiState.value.selectedModel.name != model.name) {
       _uiState.update { it.copy(selectedModel = model) }
+      PhoneOpenAiServerStore.setCurrentModel(model)
+      dataStoreRepository.saveSecret(ACTIVE_MODEL_SECRET_KEY, model.name)
     }
+  }
+
+  fun getPhoneServerBindAddresses(): List<String> {
+    return listBindableLanAddresses()
+  }
+
+  fun getPhoneServerBindAddress(): String {
+    return PhoneOpenAiServerStore.state.value.preferredBindAddress
+  }
+
+  fun setPhoneServerBindAddress(address: String) {
+    PhoneOpenAiServerStore.setServerConfig(
+      preferredBindAddress = address,
+      port = PhoneOpenAiServerStore.state.value.port,
+      autoStartMode = PhoneOpenAiServerStore.state.value.autoStartMode,
+    )
+    dataStoreRepository.saveSecret(PHONE_SERVER_BIND_ADDRESS_SECRET_KEY, address)
+  }
+
+  fun getPhoneServerPort(): Int {
+    return PhoneOpenAiServerStore.state.value.port
+  }
+
+  fun setPhoneServerPort(port: Int) {
+    PhoneOpenAiServerStore.setServerConfig(
+      preferredBindAddress = PhoneOpenAiServerStore.state.value.preferredBindAddress,
+      port = port,
+      autoStartMode = PhoneOpenAiServerStore.state.value.autoStartMode,
+    )
+    dataStoreRepository.saveSecret(PHONE_SERVER_PORT_SECRET_KEY, port.toString())
+  }
+
+  fun getPhoneServerAutoStart(): Boolean {
+    return PhoneOpenAiServerStore.state.value.autoStartOnAppLaunch
+  }
+
+  fun setPhoneServerAutoStart(autoStart: Boolean) {
+    setPhoneServerAutoStartMode(
+      if (autoStart) PhoneOpenAiServerAutoStartMode.APP_LAUNCH
+      else PhoneOpenAiServerAutoStartMode.DISABLED
+    )
+  }
+
+  fun getPhoneServerAutoStartMode(): PhoneOpenAiServerAutoStartMode {
+    return PhoneOpenAiServerStore.state.value.autoStartMode
+  }
+
+  fun setPhoneServerAutoStartMode(autoStartMode: PhoneOpenAiServerAutoStartMode) {
+    PhoneOpenAiServerStore.setServerConfig(
+      preferredBindAddress = PhoneOpenAiServerStore.state.value.preferredBindAddress,
+      port = PhoneOpenAiServerStore.state.value.port,
+      autoStartMode = autoStartMode,
+    )
+    dataStoreRepository.saveSecret(PHONE_SERVER_AUTO_START_SECRET_KEY, autoStartMode.name)
+  }
+
+  fun getPhoneServerStatefulHttpResponses(): Boolean {
+    return PhoneOpenAiServerStore.state.value.statefulHttpResponses
+  }
+
+  fun setPhoneServerStatefulHttpResponses(enabled: Boolean) {
+    PhoneOpenAiServerStore.setHttpSessionConfig(
+      statefulHttpResponses = enabled,
+      maxCachedHttpSessions = PhoneOpenAiServerStore.state.value.maxCachedHttpSessions,
+      httpSessionIdleTimeoutMinutes = PhoneOpenAiServerStore.state.value.httpSessionIdleTimeoutMinutes,
+    )
+    dataStoreRepository.saveSecret(PHONE_SERVER_STATEFUL_HTTP_RESPONSES_SECRET_KEY, enabled.toString())
+  }
+
+  fun getPhoneServerMaxCachedHttpSessions(): Int {
+    return PhoneOpenAiServerStore.state.value.maxCachedHttpSessions
+  }
+
+  fun setPhoneServerMaxCachedHttpSessions(maxSessions: Int) {
+    val sanitized = maxSessions.coerceAtLeast(1)
+    PhoneOpenAiServerStore.setHttpSessionConfig(
+      statefulHttpResponses = PhoneOpenAiServerStore.state.value.statefulHttpResponses,
+      maxCachedHttpSessions = sanitized,
+      httpSessionIdleTimeoutMinutes = PhoneOpenAiServerStore.state.value.httpSessionIdleTimeoutMinutes,
+    )
+    dataStoreRepository.saveSecret(
+      PHONE_SERVER_MAX_CACHED_HTTP_SESSIONS_SECRET_KEY,
+      sanitized.toString(),
+    )
+  }
+
+  fun getPhoneServerHttpSessionIdleTimeoutMinutes(): Int {
+    return PhoneOpenAiServerStore.state.value.httpSessionIdleTimeoutMinutes
+  }
+
+  fun setPhoneServerHttpSessionIdleTimeoutMinutes(timeoutMinutes: Int) {
+    val sanitized = timeoutMinutes.coerceAtLeast(1)
+    PhoneOpenAiServerStore.setHttpSessionConfig(
+      statefulHttpResponses = PhoneOpenAiServerStore.state.value.statefulHttpResponses,
+      maxCachedHttpSessions = PhoneOpenAiServerStore.state.value.maxCachedHttpSessions,
+      httpSessionIdleTimeoutMinutes = sanitized,
+    )
+    dataStoreRepository.saveSecret(
+      PHONE_SERVER_HTTP_SESSION_IDLE_TIMEOUT_MINUTES_SECRET_KEY,
+      sanitized.toString(),
+    )
   }
 
   open fun downloadModel(task: Task?, model: Model) {
@@ -533,10 +669,11 @@ constructor(
       status.status == ModelDownloadStatusType.FAILED ||
         status.status == ModelDownloadStatusType.NOT_DOWNLOADED
     ) {
-      deleteFileFromExternalFilesDir(curModel.downloadFileName)
+      deleteDownloadedModelFiles(curModel)
     }
 
     _uiState.update { it.copy(modelDownloadStatus = curModelDownloadStatus) }
+    PhoneOpenAiServerStore.setAvailableModels(getAllDownloadedModels())
   }
 
   fun setInitializationStatus(model: Model, status: ModelInitializationStatus) {
@@ -689,6 +826,7 @@ constructor(
         modelImportingUpdateTrigger = System.currentTimeMillis(),
       )
     }
+    PhoneOpenAiServerStore.setAvailableModels(getAllDownloadedModels())
 
     // Add to data store.
     val importedModels = dataStoreRepository.readImportedModels().toMutableList()
@@ -914,7 +1052,7 @@ constructor(
 
         if (modelAllowlist == null) {
           // Load from github.
-          var version = BuildConfig.VERSION_NAME.replace(".", "_")
+          val version = BuildConfig.VERSION_NAME.substringBefore("-").replace(".", "_")
           val url = getAllowlistUrl(version)
           Log.d(TAG, "Loading model allowlist from internet. Url: $url")
           val data = getJsonResponse<ModelAllowlist>(url = url)
@@ -1018,6 +1156,8 @@ constructor(
               tasksByCategory = groupTasksByCategory(),
             )
         }
+        PhoneOpenAiServerStore.setCurrentModel(_uiState.value.selectedModel)
+        PhoneOpenAiServerStore.setAvailableModels(getAllDownloadedModels())
 
         // Process pending downloads.
         processPendingDownloads()
@@ -1042,6 +1182,7 @@ constructor(
           tasksByCategory = groupTasksByCategory(),
         )
     }
+    PhoneOpenAiServerStore.setAvailableModels(getAllDownloadedModels())
   }
 
   fun setAppInForeground(foreground: Boolean) {
@@ -1051,7 +1192,7 @@ constructor(
   private fun saveModelAllowlistToDisk(modelAllowlistContent: String) {
     try {
       Log.d(TAG, "Saving model allowlist to disk...")
-      val file = File(externalFilesDir, MODEL_ALLOWLIST_FILENAME)
+      val file = File(resolveModelAllowlistBaseDir(), MODEL_ALLOWLIST_FILENAME)
       file.writeText(modelAllowlistContent)
       Log.d(TAG, "Done: saving model allowlist to disk.")
     } catch (e: Exception) {
@@ -1065,7 +1206,11 @@ constructor(
     try {
       Log.d(TAG, "Reading model allowlist from disk: $fileName")
       val baseDir =
-        if (fileName == MODEL_ALLOWLIST_TEST_FILENAME) File("/data/local/tmp") else externalFilesDir
+        if (fileName == MODEL_ALLOWLIST_TEST_FILENAME) {
+          File("/data/local/tmp")
+        } else {
+          resolveModelAllowlistBaseDir()
+        }
       val file = File(baseDir, fileName)
       if (file.exists()) {
         val content = file.readText()
@@ -1080,6 +1225,10 @@ constructor(
     }
 
     return null
+  }
+
+  private fun resolveModelAllowlistBaseDir(): File {
+    return context.filesDir
   }
 
   private fun isModelPartiallyDownloaded(model: Model): Boolean {
@@ -1162,91 +1311,19 @@ constructor(
     Log.d(TAG, "text input history: $textInputHistory")
 
     Log.d(TAG, "model download status: $modelDownloadStatus")
+    val selectedModel =
+      dataStoreRepository.readSecret(ACTIVE_MODEL_SECRET_KEY)?.let { savedModelName ->
+        tasks.values.asSequence().flatMap { it.models.asSequence() }.firstOrNull { it.name == savedModelName }
+      } ?: tasks.values.asSequence().flatMap { it.models.asSequence() }.firstOrNull() ?: EMPTY_MODEL
+
     return ModelManagerUiState(
       tasks = getActiveCustomTasks().map { it.task }.toList(),
       tasksByCategory = mapOf(),
       modelDownloadStatus = modelDownloadStatus,
       modelInitializationStatus = modelInstances,
+      selectedModel = selectedModel,
       textInputHistory = textInputHistory,
     )
-  }
-
-  private fun createModelFromImportedModelInfo(info: ImportedModel): Model {
-    val accelerators: MutableList<Accelerator> =
-      info.llmConfig.compatibleAcceleratorsList
-        .mapNotNull { acceleratorLabel ->
-          when (acceleratorLabel.trim()) {
-            Accelerator.GPU.label -> Accelerator.GPU
-            Accelerator.CPU.label -> Accelerator.CPU
-            Accelerator.NPU.label -> Accelerator.NPU
-            else -> null // Ignore unknown accelerator labels
-          }
-        }
-        .toMutableList()
-    val llmMaxToken = info.llmConfig.defaultMaxTokens
-    val llmSupportImage = info.llmConfig.supportImage
-    val llmSupportAudio = info.llmConfig.supportAudio
-    val llmSupportTinyGarden = info.llmConfig.supportTinyGarden
-    val llmSupportMobileActions = info.llmConfig.supportMobileActions
-    val llmSupportThinking = info.llmConfig.supportThinking
-    val llmSupportSpeculativeDecoding = info.llmConfig.supportSpeculativeDecoding
-    val configs: MutableList<Config> =
-      createLlmChatConfigs(
-          defaultMaxToken = llmMaxToken,
-          defaultTopK = info.llmConfig.defaultTopk,
-          defaultTopP = info.llmConfig.defaultTopp,
-          defaultTemperature = info.llmConfig.defaultTemperature,
-          accelerators = accelerators,
-          supportThinking = llmSupportThinking,
-          supportSpeculativeDecoding = llmSupportSpeculativeDecoding,
-        )
-        .toMutableList()
-    val capabilities: MutableList<ModelCapability> = mutableListOf()
-    val capabilityToTaskTypes: MutableMap<ModelCapability, List<String>> = mutableMapOf()
-    if (llmSupportThinking) {
-      capabilities.add(ModelCapability.LLM_THINKING)
-      capabilityToTaskTypes[ModelCapability.LLM_THINKING] =
-        listOf(
-          BuiltInTaskId.LLM_CHAT,
-          BuiltInTaskId.LLM_ASK_IMAGE,
-          BuiltInTaskId.LLM_ASK_AUDIO,
-        )
-    }
-    if (llmSupportSpeculativeDecoding) {
-      capabilities.add(ModelCapability.SPECULATIVE_DECODING)
-      capabilityToTaskTypes[ModelCapability.SPECULATIVE_DECODING] =
-        listOf(
-          BuiltInTaskId.LLM_CHAT,
-          BuiltInTaskId.LLM_ASK_IMAGE,
-          BuiltInTaskId.LLM_ASK_AUDIO,
-          BuiltInTaskId.LLM_PROMPT_LAB,
-        )
-    }
-    val model =
-      Model(
-        name = info.fileName,
-        url = "",
-        configs = configs,
-        sizeInBytes = info.fileSize,
-        downloadFileName = "$IMPORTS_DIR/${info.fileName}",
-        showBenchmarkButton = false,
-        showRunAgainButton = false,
-        imported = true,
-        llmSupportImage = llmSupportImage,
-        llmSupportAudio = llmSupportAudio,
-        llmSupportTinyGarden = llmSupportTinyGarden,
-        llmSupportMobileActions = llmSupportMobileActions,
-        capabilities = capabilities.toList(),
-        capabilityToTaskTypes = capabilityToTaskTypes.toMap(),
-        llmMaxToken = llmMaxToken,
-        accelerators = accelerators,
-        // We assume all imported models are LLM for now.
-        isLlm = true,
-        runtimeType = RuntimeType.LITERT_LM,
-      )
-    model.preProcess()
-
-    return model
   }
 
   private fun groupTasksByCategory(): Map<String, List<Task>> {
@@ -1365,16 +1442,38 @@ constructor(
     }
   }
 
+  private fun isFileInSharedModelStorage(fileName: String): Boolean {
+    val file = File(sharedModelStorageDir, fileName)
+    return file.exists()
+  }
+
   private fun isFileInDataLocalTmpDir(fileName: String): Boolean {
     val file = File("/data/local/tmp", fileName)
     return file.exists()
   }
 
-  private fun deleteFileFromExternalFilesDir(fileName: String) {
-    if (isFileInExternalFilesDir(fileName)) {
-      val file = File(externalFilesDir, fileName)
+  private fun deleteDownloadedModelFiles(model: Model) {
+    val file = File(model.getPath(context = context))
+    if (file.exists()) {
       file.delete()
     }
+    val tmpFile = File("${file.absolutePath}.$TMP_FILE_EXT")
+    if (tmpFile.exists()) {
+      tmpFile.delete()
+    }
+    if (model.isZip && model.unzipDir.isNotEmpty()) {
+      file.parentFile?.let { deleteRecursively(File(it, model.unzipDir)) }
+    }
+  }
+
+  private fun deleteRecursively(file: File) {
+    if (!file.exists()) {
+      return
+    }
+    if (file.isDirectory) {
+      file.listFiles()?.forEach { deleteRecursively(it) }
+    }
+    file.delete()
   }
 
   /**
@@ -1458,18 +1557,112 @@ constructor(
     val downloadedFileExists =
       fileName.isNotEmpty() &&
         ((model.localModelFilePathOverride.isEmpty() &&
-          isFileInExternalFilesDir(modelRelativePath)) ||
+          isFileInSharedModelStorage(modelRelativePath)) ||
           (model.localModelFilePathOverride.isNotEmpty() &&
             File(model.localModelFilePathOverride).exists()))
 
     val unzippedDirectoryExists =
       model.isZip &&
         model.unzipDir.isNotEmpty() &&
-        isFileInExternalFilesDir(
+        isFileInSharedModelStorage(
           listOf(model.normalizedName, version, model.unzipDir).joinToString(File.separator)
         )
 
-    return downloadedFileExists || unzippedDirectoryExists
+    if (downloadedFileExists || unzippedDirectoryExists) {
+      return true
+    }
+
+    val discoveredVersion = findDownloadedModelVersion(model = model, fileName = fileName)
+    if (!discoveredVersion.isNullOrEmpty()) {
+      model.version = discoveredVersion
+      model.downloadFileName = fileName
+      return true
+    }
+
+    return false
+  }
+
+  private fun findDownloadedModelVersion(model: Model, fileName: String): String? {
+    if (fileName.isEmpty()) {
+      return null
+    }
+    val candidateRoots =
+      listOfNotNull(
+        sharedModelStorageDir,
+        context.getExternalFilesDir(null),
+        File("/storage/emulated/0/Android/data/com.google.ai.edge.gallery/files"),
+      )
+        .distinctBy { it.absolutePath }
+    for (baseDir in candidateRoots) {
+      val modelDir = File(baseDir, model.normalizedName)
+      Log.d(
+        TAG,
+        "Fallback scan for '${model.name}': baseDir=${baseDir.absolutePath}, modelDir=${modelDir.absolutePath}, exists=${modelDir.exists()}, isDir=${modelDir.isDirectory}",
+      )
+      if (!modelDir.exists() || !modelDir.isDirectory) {
+        continue
+      }
+      val versionDirs = modelDir.listFiles()?.filter { it.isDirectory } ?: continue
+      for (versionDir in versionDirs) {
+        val directModelFile = File(versionDir, fileName)
+        val found =
+          directModelFile.exists() ||
+            (model.isZip && model.unzipDir.isNotEmpty() && File(versionDir, model.unzipDir).exists())
+        if (!found) {
+          continue
+        }
+        if (baseDir.absolutePath != sharedModelStorageDir.absolutePath) {
+          val targetVersionDir = File(File(sharedModelStorageDir, model.normalizedName), versionDir.name)
+          Log.d(
+            TAG,
+            "Migrating downloaded model '${model.name}' from ${versionDir.absolutePath} to ${targetVersionDir.absolutePath}",
+          )
+          if (copyRecursively(versionDir, targetVersionDir)) {
+            SharedModelStorage.ensureWorldReadable(targetVersionDir)
+            if (baseDir == context.getExternalFilesDir(null)) {
+              deleteRecursively(versionDir)
+            }
+            return versionDir.name
+          }
+          Log.w(
+            TAG,
+            "Failed to migrate downloaded model '${model.name}' from ${versionDir.absolutePath} to shared storage.",
+          )
+          continue
+        }
+        Log.d(
+          TAG,
+          "Found downloaded model '${model.name}' under version '${versionDir.name}' via fallback scan.",
+        )
+        return versionDir.name
+      }
+    }
+    return null
+  }
+
+  private fun copyRecursively(source: File, destination: File): Boolean {
+    return try {
+      if (source.isDirectory) {
+        if (destination.exists()) {
+          deleteRecursively(destination)
+        }
+        if (!destination.exists() && !destination.mkdirs()) {
+          return false
+        }
+        source.listFiles()?.all { child ->
+          copyRecursively(child, File(destination, child.name))
+        } ?: true
+      } else {
+        destination.parentFile?.let { if (!it.exists() && !it.mkdirs()) return false }
+        source.inputStream().use { input ->
+          destination.outputStream().use { output -> input.copyTo(output) }
+        }
+        true
+      }
+    } catch (e: Exception) {
+      Log.w(TAG, "Failed to copy ${source.absolutePath} to ${destination.absolutePath}", e)
+      false
+    }
   }
 }
 

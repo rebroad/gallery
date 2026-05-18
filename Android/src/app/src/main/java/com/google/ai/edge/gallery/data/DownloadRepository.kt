@@ -41,6 +41,7 @@ import com.google.ai.edge.gallery.GalleryEvent
 import com.google.ai.edge.gallery.R
 import com.google.ai.edge.gallery.firebaseAnalytics
 import com.google.ai.edge.gallery.worker.DownloadWorker
+import java.io.File
 import java.util.UUID
 import java.util.concurrent.Executors
 
@@ -108,6 +109,11 @@ class DefaultDownloadRepository(
         .putString(KEY_MODEL_COMMIT_HASH, model.version)
         .putString(KEY_MODEL_DOWNLOAD_MODEL_DIR, model.normalizedName)
         .putString(KEY_MODEL_DOWNLOAD_FILE_NAME, model.downloadFileName)
+        .putString(
+          KEY_MODEL_DOWNLOAD_OUTPUT_DIR,
+          File(model.getPath(context = context)).parentFile?.absolutePath
+            ?: SharedModelStorage.modelVersionDir(model).absolutePath,
+        )
         .putBoolean(KEY_MODEL_IS_ZIP, model.isZip)
         .putString(KEY_MODEL_UNZIPPED_DIR, model.unzipDir)
         .putLong(KEY_MODEL_TOTAL_BYTES, totalBytes)

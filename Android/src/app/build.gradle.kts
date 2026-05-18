@@ -14,6 +14,9 @@
  * limitations under the License.
  */
 
+import java.io.ByteArrayOutputStream
+import java.io.File
+
 plugins {
   alias(libs.plugins.android.application)
   // Note: set apply to true to enable google-services (requires google-services.json).
@@ -28,6 +31,71 @@ plugins {
   kotlin("kapt")
 }
 
+fun Project.gitOutput(vararg args: String): String? {
+  val stdout = ByteArrayOutputStream()
+  return runCatching {
+    exec {
+      commandLine("git", *args)
+      standardOutput = stdout
+      errorOutput = stdout
+      isIgnoreExitValue = true
+    }
+    stdout.toString().trim().takeIf { it.isNotEmpty() }
+  }.getOrNull()
+}
+
+fun Project.gitVersionName(baseVersion: String): String {
+  val shortHash = gitOutput("rev-parse", "--short=12", "HEAD") ?: "nogit"
+  val dirtySuffix =
+    if ((gitOutput("status", "--porcelain", "--untracked-files=all") ?: "").isNotBlank()) "+" else ""
+  return "$baseVersion-$shortHash$dirtySuffix"
+}
+
+fun Project.localLiteRtLmJar(): File =
+  rootDir.toPath()
+    .resolve("../../../LiteRT-LM.build/bazel-bin/kotlin/java/com/google/ai/edge/litertlm/litertlm-jvm.jar")
+    .normalize()
+    .toFile()
+
+fun Project.localLiteRtLmAndroidJni(): File =
+  rootDir.toPath()
+    .resolve("../../../LiteRT-LM.build/bazel-bin/kotlin/java/com/google/ai/edge/litertlm/jni/liblitertlm_jni.so")
+    .normalize()
+    .toFile()
+
+val localLiteRtLmJar = localLiteRtLmJar()
+val localLiteRtLmAndroidJni = localLiteRtLmAndroidJni()
+val useLocalLiteRtLm = localLiteRtLmJar.isFile && localLiteRtLmAndroidJni.isFile
+
+val extractLocalLiteRtLmJni =
+    if (useLocalLiteRtLm) {
+      tasks.register<Sync>("extractLocalLiteRtLmJni") {
+        from(localLiteRtLmAndroidJni)
+        into(layout.buildDirectory.dir("generated/local-litertlm-jni"))
+        eachFile {
+          path = "arm64-v8a/${name}"
+        }
+        includeEmptyDirs = false
+      }
+    } else {
+      null
+    }
+
+val extractLocalLiteRtLmNativeLibs =
+    if (useLocalLiteRtLm) {
+      tasks.register<Sync>("extractLocalLiteRtLmNativeLibs") {
+        from(rootDir.toPath().resolve("../../../LiteRT-LM.build/prebuilt/android_arm64").normalize())
+        include("*.so")
+        into(layout.buildDirectory.dir("generated/local-litertlm-native"))
+        eachFile {
+          path = "arm64-v8a/${name}"
+        }
+        includeEmptyDirs = false
+      }
+    } else {
+      null
+    }
+
 android {
   namespace = "com.google.ai.edge.gallery"
   compileSdk = 35
@@ -37,7 +105,7 @@ android {
     minSdk = 31
     targetSdk = 35
     versionCode = 33
-    versionName = "1.0.15"
+    versionName = gitVersionName("1.0.15")
 
     // Needed for HuggingFace auth workflows.
     // Use the scheme of the "Redirect URLs" in HuggingFace app.
@@ -62,11 +130,16 @@ android {
   }
   kotlinOptions {
     jvmTarget = "11"
-    freeCompilerArgs += "-Xcontext-receivers"
   }
   buildFeatures {
     compose = true
     buildConfig = true
+  }
+  sourceSets.getByName("main").apply {
+    if (useLocalLiteRtLm) {
+      jniLibs.srcDir(layout.buildDirectory.dir("generated/local-litertlm-jni"))
+      jniLibs.srcDir(layout.buildDirectory.dir("generated/local-litertlm-native"))
+    }
   }
 }
 
@@ -89,7 +162,11 @@ dependencies {
   implementation(libs.androidx.lifecycle.process)
   implementation(libs.androidx.security.crypto)
   implementation(libs.androidx.webkit)
-  implementation(libs.litertlm)
+  if (useLocalLiteRtLm) {
+    implementation(files(localLiteRtLmJar))
+  } else {
+    implementation(libs.litertlm)
+  }
   implementation(libs.commonmark)
   implementation(libs.richtext)
   implementation(libs.tflite)
@@ -124,6 +201,13 @@ dependencies {
   implementation(libs.mcp.kotlin.sdk)
   implementation(libs.ktor.client.android)
   implementation(libs.ktor.client.core)
+}
+
+tasks.matching { it.name.startsWith("pre") && it.name.endsWith("Build") }.configureEach {
+  if (useLocalLiteRtLm) {
+    dependsOn(extractLocalLiteRtLmJni)
+    dependsOn(extractLocalLiteRtLmNativeLibs)
+  }
 }
 
 protobuf {

@@ -156,6 +156,7 @@ fun DownloadAndTryButton(
   val inProgress = downloadStatus == ModelDownloadStatusType.IN_PROGRESS
   val downloadSucceeded = downloadStatus == ModelDownloadStatusType.SUCCEEDED
   val isPartiallyDownloaded = downloadStatus == ModelDownloadStatusType.PARTIALLY_DOWNLOADED
+  val isCurrentlyRunningModel = model.instance != null
   val showDownloadProgress =
     !downloadSucceeded && (downloadStarted || checkingToken || inProgress || isPartiallyDownloaded)
 
@@ -415,6 +416,15 @@ fun DownloadAndTryButton(
               stringResource(R.string.download),
               color = textColor,
               style = MaterialTheme.typography.titleMedium,
+            )
+          } else if (isCurrentlyRunningModel) {
+            Text(
+              stringResource(R.string.enter_model),
+              color = textColor,
+              style = MaterialTheme.typography.titleMedium,
+              maxLines = 1,
+              autoSize =
+                TextAutoSize.StepBased(minFontSize = 8.sp, maxFontSize = 16.sp, stepSize = 1.sp),
             )
           } else if (canShowTryIt) {
             Text(

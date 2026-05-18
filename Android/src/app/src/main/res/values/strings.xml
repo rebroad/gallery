@@ -27,9 +27,9 @@
   <string name="aichat_initializing_title" translatable="false">Initializing model</string>
   <string name="aichat_initializing_content" translatable="false">Sit tight, this can take up to 1 minute</string>
   <string name="app_intro" translatable="false">Explore a world of amazing on-device models from</string>
-  <string name="app_name" translatable="false">Google AI Edge Gallery</string>
+  <string name="app_name" translatable="false">Google AI Edgy Gallery</string>
   <string name="app_name_first_part" translatable="false">Google AI</string>
-  <string name="app_name_second_part" translatable="false">Edge Gallery</string>
+  <string name="app_name_second_part" translatable="false">Edgy Gallery</string>
   <string name="askimage_emptystate_title" translatable="false">Ask Image</string>
   <string name="askimage_emptystate_content" translatable="false">To get started, tap the + below to add an image (max 10 images per chat) and type a prompt to ask a question about it!</string>
   <string name="askimage_emptystate_content_aicore" translatable="false">To get started, tap the + below to add an image (max 1 image per chat) and type a prompt to ask a question about it!</string>
@@ -88,11 +88,14 @@
   <string name="dismiss" translatable="false">Dismiss</string>
   <string name="done" translatable="false">Done</string>
   <string name="download" translatable="false">Download</string>
+  <string name="downloaded" translatable="false">Downloaded</string>
   <string name="downloaded_size" translatable="false">%1$s downloaded</string>
   <string name="drawer_settings_label" translatable="false">Settings</string>
   <string name="drawer_settings_description" translatable="false">Manage application settings</string>
   <string name="drawer_models_label" translatable="false">Models</string>
   <string name="drawer_models_description" translatable="false">Browse, try, and benchmark models</string>
+  <string name="drawer_http_server_label" translatable="false">HTTP Server</string>
+  <string name="drawer_http_server_description" translatable="false">Host the selected model over the network</string>
   <string name="drawer_notifications_label" translatable="false">Notifications</string>
   <string name="drawer_notifications_description" translatable="false">View scheduled notifications</string>
   <string name="notifications_title" translatable="false">Notifications</string>
@@ -103,6 +106,38 @@
   <string name="notifications_date_label" translatable="false">Date: %s</string>
   <string name="notifications_repeat_daily" translatable="false">Daily</string>
   <string name="notifications_repeat_one_time" translatable="false">One-time</string>
+  <string name="phone_server_title" translatable="false">HTTP Server</string>
+  <string name="phone_server_subtitle" translatable="false">Start and stop the phone-hosted OpenAI-compatible server</string>
+  <string name="phone_server_status_running" translatable="false">Running</string>
+  <string name="phone_server_status_starting" translatable="false">Starting</string>
+  <string name="phone_server_status_stopped" translatable="false">Stopped</string>
+  <string name="phone_server_status_error" translatable="false">Error</string>
+  <string name="phone_server_status_label" translatable="false">Status</string>
+  <string name="phone_server_active_model_label" translatable="false">Active model</string>
+  <string name="phone_server_endpoint_label" translatable="false">LAN endpoint</string>
+  <string name="phone_server_listen_hint" translatable="false">Start the server to expose the current model over HTTP on your LAN.</string>
+  <string name="phone_server_stop" translatable="false">Stop server</string>
+  <string name="phone_server_start" translatable="false">Start server</string>
+  <string name="phone_server_starting_model" translatable="false">Loading model…</string>
+  <string name="phone_server_bind_address_label" translatable="false">Listen on</string>
+  <string name="phone_server_bind_address_auto" translatable="false">Automatic</string>
+  <string name="phone_server_bind_address_hint" translatable="false">Choose the network interface or address to bind the server to.</string>
+  <string name="phone_server_port_label" translatable="false">Port</string>
+  <string name="phone_server_auto_start_label" translatable="false">Auto-start</string>
+  <string name="phone_server_auto_start_hint" translatable="false">Choose when Gallery should start the server automatically.</string>
+  <string name="phone_server_auto_start_disabled" translatable="false">No auto-start</string>
+  <string name="phone_server_auto_start_app_launch" translatable="false">Start on app launch</string>
+  <string name="phone_server_auto_start_always_on" translatable="false">Always on</string>
+  <string name="phone_server_advanced_settings_label" translatable="false">Advanced settings</string>
+  <string name="phone_server_stateful_http_responses_label" translatable="false">Stateful HTTP responses</string>
+  <string name="phone_server_stateful_http_responses_hint" translatable="false">Remember HTTP responses so previous_response_id can resume a conversation.</string>
+  <string name="phone_server_stateful_http_responses_operational_on" translatable="false">Live status: operational</string>
+  <string name="phone_server_stateful_http_responses_operational_off" translatable="false">Live status: not operational</string>
+  <string name="phone_server_stateful_http_responses_operational_unknown" translatable="false">Live status: checking…</string>
+  <string name="phone_server_max_cached_http_sessions_label" translatable="false">Max cached HTTP sessions</string>
+  <string name="phone_server_max_cached_http_sessions_hint" translatable="false">Limit how many HTTP sessions stay warm in memory.</string>
+  <string name="phone_server_http_session_idle_timeout_label" translatable="false">HTTP session idle timeout (minutes)</string>
+  <string name="phone_server_http_session_idle_timeout_hint" translatable="false">Drop cached HTTP sessions after this many idle minutes.</string>
   <string name="edit" translatable="false">Edit</string>
   <string name="edit_secret" translatable="false">Edit secret</string>
   <string name="enter_instruction" translatable="false">Enter instruction</string>
@@ -192,6 +227,9 @@
   <string name="tos_dialog_accept_and_continue_button_label" translatable="false">Accept &amp; continue</string>
   <string name="tos_dialog_agree_and_continue_button_label" translatable="false">Agree &amp; continue</string>
   <string name="try_it" translatable="false">Try it</string>
+  <string name="enter_model" translatable="false">Enter</string>
+  <string name="model_list_cached_models_title" translatable="false">Cached models</string>
+  <string name="model_list_running_model_subtitle" translatable="false">Already spun up and ready to use</string>
   <string name="turn_on_all" translatable="false">Turn on all</string>
   <string name="turn_off_all" translatable="false">Turn off all</string>
   <string name="undo" translatable="false">Undo</string>

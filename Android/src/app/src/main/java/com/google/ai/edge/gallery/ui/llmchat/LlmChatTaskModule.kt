@@ -117,6 +117,10 @@ class LlmChatTask @Inject constructor() : CustomTask {
       viewModel = viewModel,
       allowEditingSystemPrompt = true,
       curSystemPrompt = uiSystemPrompt,
+      autoStartServer = myData.autoStartServer,
+      serverToken = myData.serverToken,
+      allowLanNoAuth = myData.allowLanNoAuth,
+      lanNoAuthSubnetCidr = myData.lanNoAuthSubnetCidr,
       onSystemPromptChanged = { newPrompt ->
         val selectedModel = myData.modelManagerViewModel.uiState.value.selectedModel
         viewModel.applySystemPromptChange(

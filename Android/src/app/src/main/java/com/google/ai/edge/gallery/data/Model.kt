@@ -247,7 +247,8 @@ data class Model(
   /**
    * When set, the app will try to use this path to find the model file.
    *
-   * For testing purpose only.
+   * This is an absolute path and can be used for shared storage across apps if both apps can
+   * access the same filesystem location.
    */
   val localModelFilePathOverride: String = "",
 
@@ -365,13 +366,12 @@ data class Model(
         .joinToString(File.separator)
     }
 
-    val baseDir =
-      listOf(context.getExternalFilesDir(null)?.absolutePath ?: "", normalizedName, version)
-        .joinToString(File.separator)
+    val baseDir = SharedModelStorage.sharedRootDir()
+    val modelVersionDir = File(File(baseDir, normalizedName), version)
     return if (this.isZip && this.unzipDir.isNotEmpty()) {
-      listOf(baseDir, this.unzipDir).joinToString(File.separator)
+      File(modelVersionDir, this.unzipDir).absolutePath
     } else {
-      listOf(baseDir, fileName).joinToString(File.separator)
+      File(modelVersionDir, fileName).absolutePath
     }
   }
 

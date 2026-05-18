@@ -91,6 +91,7 @@ import com.google.ai.edge.gallery.ui.common.ModelPageAppBar
 import com.google.ai.edge.gallery.ui.common.copyBitmapToClipboard
 import com.google.ai.edge.gallery.ui.common.saveBitmapToMediaStore
 import com.google.ai.edge.gallery.ui.common.shareBitmap
+import com.google.ai.edge.gallery.server.PhoneOpenAiServerManager
 import com.google.ai.edge.gallery.ui.modelmanager.ModelInitializationStatusType
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
 import java.io.File
@@ -144,6 +145,10 @@ fun ChatView(
   curSystemPrompt: String = "",
   onSystemPromptChanged: (String) -> Unit = {},
   sendMessageTrigger: SendMessageTrigger? = null,
+  autoStartServer: Boolean = false,
+  serverToken: String? = null,
+  allowLanNoAuth: Boolean = false,
+  lanNoAuthSubnetCidr: String = "",
 ) {
   val uiState by viewModel.uiState.collectAsState()
   val modelManagerUiState by modelManagerViewModel.uiState.collectAsState()
@@ -203,6 +208,23 @@ fun ChatView(
 
   LaunchedEffect(sendMessageTrigger) {
     sendMessageTrigger?.let { trigger -> onSendMessage(trigger.model, trigger.messages) }
+  }
+
+  LaunchedEffect(autoStartServer, selectedModel.name, selectedModel.instance) {
+    if (
+      autoStartServer &&
+      selectedModel.instance != null &&
+        PhoneOpenAiServerManager.start(
+          context = context,
+          model = selectedModel,
+          availableModels = modelManagerViewModel.getAllDownloadedModels(),
+          serverToken = serverToken,
+          allowLanNoAuth = allowLanNoAuth,
+          noAuthSubnetCidr = lanNoAuthSubnetCidr,
+        ) == null
+    ) {
+      Log.d(TAG, "Auto-started phone server for model '${selectedModel.name}'")
+    }
   }
 
   // Handle system's edge swipe.

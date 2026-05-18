@@ -1,0 +1,329 @@
+/*
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package com.google.ai.edge.gallery.server
+
+import android.content.Context
+import android.content.Intent
+import android.util.Log
+import androidx.core.content.ContextCompat
+import com.google.ai.edge.gallery.data.Model
+import java.net.Inet4Address
+import java.net.NetworkInterface
+import java.util.UUID
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+
+internal const val PHONE_SERVER_PORT = 11435
+
+enum class PhoneOpenAiServerStatus {
+  STOPPED,
+  STARTING,
+  RUNNING,
+  ERROR,
+}
+
+data class PhoneOpenAiServerState(
+  val status: PhoneOpenAiServerStatus = PhoneOpenAiServerStatus.STOPPED,
+  val host: String = "",
+  val port: Int = PHONE_SERVER_PORT,
+  val preferredBindAddress: String = "",
+  val token: String = "",
+  val modelName: String = "",
+  val allowLanNoAuth: Boolean = true,
+  val noAuthSubnetCidr: String = "",
+  val autoStartMode: PhoneOpenAiServerAutoStartMode = PhoneOpenAiServerAutoStartMode.DISABLED,
+  val statefulHttpResponses: Boolean = true,
+  val maxCachedHttpSessions: Int = 4,
+  val httpSessionIdleTimeoutMinutes: Int = 10,
+  val liveStatefulHttpResponses: Boolean? = null,
+  val liveStatefulHttpResponsesCheckedAtMillis: Long = 0L,
+  val liveHealthError: String? = null,
+  val error: String? = null,
+) {
+  val autoStartOnAppLaunch: Boolean
+    get() = autoStartMode.autoStartOnAppLaunch
+}
+
+object PhoneOpenAiServerStore {
+  private val _state = MutableStateFlow(PhoneOpenAiServerState())
+  val state = _state.asStateFlow()
+
+  @Volatile var currentModel: Model? = null
+    private set
+
+  @Volatile var availableModels: List<Model> = emptyList()
+    private set
+
+  @Volatile var allowLanNoAuth: Boolean = true
+    private set
+
+  @Volatile var noAuthSubnetCidr: String = ""
+    private set
+
+  fun setCurrentModel(model: Model?) {
+    currentModel = model
+    if (model != null) {
+      _state.update { it.copy(modelName = model.name, error = null) }
+    } else {
+      _state.update { it.copy(modelName = "", error = null) }
+    }
+  }
+
+  fun isHostingModel(model: Model): Boolean {
+    return state.value.status != PhoneOpenAiServerStatus.STOPPED && currentModel?.name == model.name
+  }
+
+  fun setAvailableModels(models: List<Model>) {
+    availableModels = models.filter { it.isLlm }
+  }
+
+  fun setServerConfig(
+    preferredBindAddress: String,
+    port: Int,
+    autoStartMode: PhoneOpenAiServerAutoStartMode,
+  ) {
+    _state.update {
+      it.copy(
+        preferredBindAddress = preferredBindAddress,
+        port = port,
+        autoStartMode = autoStartMode,
+      )
+    }
+  }
+
+  fun setHttpSessionConfig(
+    statefulHttpResponses: Boolean,
+    maxCachedHttpSessions: Int,
+    httpSessionIdleTimeoutMinutes: Int,
+  ) {
+    _state.update {
+      it.copy(
+        statefulHttpResponses = statefulHttpResponses,
+        maxCachedHttpSessions = maxCachedHttpSessions.coerceAtLeast(1),
+        httpSessionIdleTimeoutMinutes = httpSessionIdleTimeoutMinutes.coerceAtLeast(1),
+      )
+    }
+  }
+
+  fun setLiveHttpSessionHealth(
+    statefulHttpResponses: Boolean?,
+    checkedAtMillis: Long = System.currentTimeMillis(),
+    error: String? = null,
+  ) {
+    _state.update {
+      it.copy(
+        liveStatefulHttpResponses = statefulHttpResponses,
+        liveStatefulHttpResponsesCheckedAtMillis = checkedAtMillis,
+        liveHealthError = error,
+      )
+    }
+  }
+
+  fun setLanAuthBypass(enabled: Boolean, subnetCidr: String = "") {
+    allowLanNoAuth = enabled
+    noAuthSubnetCidr = subnetCidr
+    _state.update { it.copy(allowLanNoAuth = enabled, noAuthSubnetCidr = subnetCidr) }
+  }
+
+  fun beginStarting(token: String, port: Int = PHONE_SERVER_PORT) {
+    _state.update {
+      it.copy(
+        status = PhoneOpenAiServerStatus.STARTING,
+        host = "",
+        port = port,
+        token = token,
+        error = null,
+        liveStatefulHttpResponses = null,
+        liveStatefulHttpResponsesCheckedAtMillis = 0L,
+        liveHealthError = null,
+      )
+    }
+  }
+
+  fun setRunning(host: String, port: Int, token: String, modelName: String) {
+    _state.update {
+      it.copy(
+        status = PhoneOpenAiServerStatus.RUNNING,
+        host = host,
+        port = port,
+        token = token,
+        modelName = modelName,
+        allowLanNoAuth = allowLanNoAuth,
+        noAuthSubnetCidr = noAuthSubnetCidr,
+        liveStatefulHttpResponses = null,
+        liveStatefulHttpResponsesCheckedAtMillis = 0L,
+        liveHealthError = null,
+        error = null,
+      )
+    }
+  }
+
+  fun setError(message: String) {
+    _state.update { it.copy(status = PhoneOpenAiServerStatus.ERROR, error = message) }
+  }
+
+  fun stop() {
+    _state.update {
+      it.copy(
+        status = PhoneOpenAiServerStatus.STOPPED,
+        host = "",
+        token = "",
+        liveStatefulHttpResponses = null,
+        liveStatefulHttpResponsesCheckedAtMillis = 0L,
+        liveHealthError = null,
+        error = null,
+      )
+    }
+  }
+
+  fun ensureToken(): String {
+    val curState = _state.value
+    if (curState.token.isNotEmpty()) {
+      return curState.token
+    }
+    val token = UUID.randomUUID().toString().replace("-", "")
+    _state.update { it.copy(token = token) }
+    return token
+  }
+
+  fun setToken(token: String) {
+    if (token.isBlank()) {
+      return
+    }
+    _state.update { it.copy(token = token) }
+  }
+}
+
+object PhoneOpenAiServerManager {
+  const val ACTION_START = "com.google.ai.edge.gallery.server.action.START"
+  const val ACTION_STOP = "com.google.ai.edge.gallery.server.action.STOP"
+
+  fun start(
+    context: Context,
+    model: Model,
+    availableModels: List<Model>,
+    serverToken: String? = null,
+    allowLanNoAuth: Boolean = true,
+    noAuthSubnetCidr: String = "",
+  ): String? {
+    val curStatus = PhoneOpenAiServerStore.state.value.status
+    if (curStatus == PhoneOpenAiServerStatus.STARTING) {
+      return null
+    }
+
+    val desiredBindAddress =
+      resolveBindAddress(PhoneOpenAiServerStore.state.value.preferredBindAddress)?.hostAddress
+        .orEmpty()
+    val currentState = PhoneOpenAiServerStore.state.value
+    val currentBindAddress = currentState.host
+    val currentPort = currentState.port
+    val currentModelName = currentState.modelName
+    val desiredPort = currentState.port
+    val needsRestart =
+      curStatus == PhoneOpenAiServerStatus.RUNNING &&
+        (currentBindAddress != desiredBindAddress ||
+          currentPort != desiredPort ||
+          currentModelName != model.name)
+    if (curStatus == PhoneOpenAiServerStatus.RUNNING && !needsRestart) {
+      return null
+    }
+
+    if (desiredBindAddress.isBlank()) {
+      val errorMessage =
+        if (PhoneOpenAiServerStore.state.value.preferredBindAddress.isNotBlank()) {
+          "Selected interface ${PhoneOpenAiServerStore.state.value.preferredBindAddress} is unavailable. Wait for ZeroTier or choose another interface."
+        } else {
+          "No LAN address found. Connect Wi-Fi or your VPN interface and try again."
+        }
+      PhoneOpenAiServerStore.setError(errorMessage)
+      return errorMessage
+    }
+
+    PhoneOpenAiServerStore.setCurrentModel(model)
+    PhoneOpenAiServerStore.setAvailableModels(availableModels)
+    PhoneOpenAiServerStore.setLanAuthBypass(allowLanNoAuth, noAuthSubnetCidr)
+    if (!serverToken.isNullOrBlank()) {
+      PhoneOpenAiServerStore.setToken(serverToken)
+    }
+    val token = PhoneOpenAiServerStore.ensureToken()
+    PhoneOpenAiServerStore.beginStarting(
+      token = token,
+      port = PhoneOpenAiServerStore.state.value.port,
+    )
+
+    val intent = Intent(context, PhoneOpenAiServerService::class.java).apply {
+      action = ACTION_START
+    }
+    ContextCompat.startForegroundService(context, intent)
+    return null
+  }
+
+  fun stop(context: Context) {
+    val intent = Intent(context, PhoneOpenAiServerService::class.java).apply {
+      action = ACTION_STOP
+    }
+    ContextCompat.startForegroundService(context, intent)
+  }
+}
+
+internal fun listBindableLanAddresses(): List<String> {
+  return collectBindableLanAddresses().mapNotNull { it.hostAddress }.distinct()
+}
+
+internal fun resolveBindAddress(preferredBindAddress: String? = null): Inet4Address? {
+  val candidates = collectBindableLanAddresses()
+  val preferred = preferredBindAddress?.trim().orEmpty()
+  if (preferred.isNotEmpty()) {
+    candidates.firstOrNull { it.hostAddress == preferred }?.let {
+      Log.i("AGPhoneOpenAiServer", "Selected preferred bind address ${it.hostAddress}")
+      return it
+    }
+    Log.w("AGPhoneOpenAiServer", "Preferred bind address $preferred is unavailable")
+    return null
+  }
+  candidates.firstOrNull { it.hostAddress?.startsWith("192.168.192.") == true }?.let {
+    Log.i("AGPhoneOpenAiServer", "Selected preferred bind address ${it.hostAddress}")
+    return it
+  }
+  candidates.firstOrNull()?.also {
+    Log.i("AGPhoneOpenAiServer", "Selected fallback bind address ${it.hostAddress}")
+  }
+  return candidates.firstOrNull()
+}
+
+private fun collectBindableLanAddresses(): List<Inet4Address> {
+  val interfaces = NetworkInterface.getNetworkInterfaces() ?: return emptyList()
+  val candidates = mutableListOf<Inet4Address>()
+  for (networkInterface in interfaces) {
+    if (!networkInterface.isUp || networkInterface.isLoopback || networkInterface.isVirtual) {
+      continue
+    }
+    val addresses = networkInterface.inetAddresses
+    for (address in addresses) {
+      if (
+        address is Inet4Address &&
+          !address.isLoopbackAddress &&
+          !address.isLinkLocalAddress &&
+          address.isSiteLocalAddress
+      ) {
+        candidates.add(address)
+      }
+    }
+  }
+  return candidates
+}
