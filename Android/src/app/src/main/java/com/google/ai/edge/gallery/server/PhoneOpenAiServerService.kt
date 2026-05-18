@@ -329,7 +329,7 @@ class PhoneOpenAiServerService : Service() {
   }
 
   private suspend fun handleChatCompletion(socket: Socket, request: OpenAiChatRequest) {
-    val model = PhoneOpenAiServerStore.currentModel
+    val model = resolveModelForRequest(request.model)
     val instance = model?.instance as? LlmModelInstance
     if (model == null || instance == null) {
       writeJsonResponse(
@@ -337,15 +337,6 @@ class PhoneOpenAiServerService : Service() {
         503,
         "Service Unavailable",
         jsonObjectOf("error" to jsonObjectOf("message" to "Model is not initialized")),
-      )
-      return
-    }
-    if (servedModelName != null && request.model != null && request.model != servedModelName) {
-      writeJsonResponse(
-        socket,
-        400,
-        "Bad Request",
-        jsonObjectOf("error" to jsonObjectOf("message" to "Requested model is not loaded")),
       )
       return
     }
@@ -685,6 +676,23 @@ class PhoneOpenAiServerService : Service() {
     val first = available.first()
     PhoneOpenAiServerStore.setCurrentModel(first)
     return first
+  }
+
+  private fun resolveModelForRequest(requestModelName: String?): Model? {
+    val available = PhoneOpenAiServerStore.availableModels
+    val candidateName = requestModelName?.trim().orEmpty()
+    if (candidateName.isNotEmpty()) {
+      available.firstOrNull { it.name == candidateName }?.let {
+        PhoneOpenAiServerStore.setCurrentModel(it)
+        return it
+      }
+      PhoneOpenAiServerStore.currentModel?.let { current ->
+        if (current.name == candidateName) {
+          return current
+        }
+      }
+    }
+    return resolveModelToServe()
   }
 
   private fun isInLanBypassSubnet(hostAddress: String?): Boolean {
