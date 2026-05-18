@@ -57,6 +57,7 @@ import com.google.ai.edge.gallery.proto.AccessTokenData
 import com.google.ai.edge.gallery.proto.ImportedModel
 import com.google.ai.edge.gallery.proto.Theme
 import com.google.ai.edge.gallery.runtime.aicore.AICoreModelHelper
+import com.google.ai.edge.gallery.server.PhoneOpenAiServerStore
 import com.google.ai.edge.litertlm.Contents
 import com.google.gson.Gson
 import com.google.gson.JsonSyntaxException
@@ -284,6 +285,7 @@ constructor(
   fun selectModel(model: Model) {
     if (_uiState.value.selectedModel.name != model.name) {
       _uiState.update { it.copy(selectedModel = model) }
+      PhoneOpenAiServerStore.setCurrentModel(model)
     }
   }
 
@@ -537,6 +539,7 @@ constructor(
     }
 
     _uiState.update { it.copy(modelDownloadStatus = curModelDownloadStatus) }
+    PhoneOpenAiServerStore.setAvailableModels(getAllDownloadedModels())
   }
 
   fun setInitializationStatus(model: Model, status: ModelInitializationStatus) {
@@ -689,6 +692,7 @@ constructor(
         modelImportingUpdateTrigger = System.currentTimeMillis(),
       )
     }
+    PhoneOpenAiServerStore.setAvailableModels(getAllDownloadedModels())
 
     // Add to data store.
     val importedModels = dataStoreRepository.readImportedModels().toMutableList()
@@ -1018,6 +1022,7 @@ constructor(
               tasksByCategory = groupTasksByCategory(),
             )
         }
+        PhoneOpenAiServerStore.setAvailableModels(getAllDownloadedModels())
 
         // Process pending downloads.
         processPendingDownloads()
@@ -1042,6 +1047,7 @@ constructor(
           tasksByCategory = groupTasksByCategory(),
         )
     }
+    PhoneOpenAiServerStore.setAvailableModels(getAllDownloadedModels())
   }
 
   fun setAppInForeground(foreground: Boolean) {

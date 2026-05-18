@@ -145,6 +145,11 @@
             </intent-filter>
         </service>
 
+        <service
+            android:name=".server.PhoneOpenAiServerService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <receiver
             android:name="com.google.ai.edge.gallery.notifications.NotificationReceiver"
             android:exported="false" />

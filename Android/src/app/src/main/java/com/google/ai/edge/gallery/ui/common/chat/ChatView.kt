@@ -91,6 +91,7 @@ import com.google.ai.edge.gallery.ui.common.ModelPageAppBar
 import com.google.ai.edge.gallery.ui.common.copyBitmapToClipboard
 import com.google.ai.edge.gallery.ui.common.saveBitmapToMediaStore
 import com.google.ai.edge.gallery.ui.common.shareBitmap
+import com.google.ai.edge.gallery.server.PhoneOpenAiServerManager
 import com.google.ai.edge.gallery.ui.modelmanager.ModelInitializationStatusType
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
 import java.io.File
@@ -310,6 +311,8 @@ fun ChatView(
               inProgress = uiState.inProgress,
               modelPreparing = uiState.preparing,
               shouldShowHistoryButton = true,
+              showServerButton = true,
+              serverReady = selectedModel.instance != null,
               onConfigChanged = { old, new ->
                 // Filter out config values that are not relevant to the task.
                 //
@@ -355,6 +358,17 @@ fun ChatView(
                   },
                 )
                 scope.launch { drawerState.open() }
+              },
+              onServerClicked = { currentlyRunning ->
+                if (currentlyRunning) {
+                  PhoneOpenAiServerManager.stop(context = context)
+                } else {
+                  PhoneOpenAiServerManager.start(
+                    context = context,
+                    model = selectedModel,
+                    availableModels = modelManagerViewModel.getAllDownloadedModels(),
+                  )
+                }
               },
             )
           },
