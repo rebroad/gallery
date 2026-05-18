@@ -84,6 +84,10 @@ fun LlmChatScreen(
   skillCount: Int = 0,
   mcpCount: Int = 0,
   mcpToolsCount: Int = 0,
+  autoStartServer: Boolean = false,
+  serverToken: String? = null,
+  allowLanNoAuth: Boolean = false,
+  lanNoAuthSubnetCidr: String = "192.168.192.0/24",
 ) {
   ChatViewWrapper(
     viewModel = viewModel,
@@ -108,6 +112,10 @@ fun LlmChatScreen(
     showImagePicker = showImagePicker,
     showAudioPicker = showAudioPicker,
     getActiveSkills = getActiveSkills,
+    autoStartServer = autoStartServer,
+    serverToken = serverToken,
+    allowLanNoAuth = allowLanNoAuth,
+    lanNoAuthSubnetCidr = lanNoAuthSubnetCidr,
   )
 }
 
@@ -226,6 +234,10 @@ fun ChatViewWrapper(
   skillCount: Int = 0,
   mcpCount: Int = 0,
   mcpToolsCount: Int = 0,
+  autoStartServer: Boolean = false,
+  serverToken: String? = null,
+  allowLanNoAuth: Boolean = false,
+  lanNoAuthSubnetCidr: String = "192.168.192.0/24",
 ) {
   val context = LocalContext.current
   val task = modelManagerViewModel.getTaskById(id = taskId)!!
@@ -351,6 +363,10 @@ fun ChatViewWrapper(
     onSystemPromptChanged = onSystemPromptChanged,
     sendMessageTrigger = sendMessageTrigger,
     showAudioPicker = showAudioPicker,
+    autoStartServer = autoStartServer,
+    serverToken = serverToken,
+    allowLanNoAuth = allowLanNoAuth,
+    lanNoAuthSubnetCidr = lanNoAuthSubnetCidr,
   )
 }
 

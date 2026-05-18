@@ -41,6 +41,8 @@ data class PhoneOpenAiServerState(
   val port: Int = PHONE_SERVER_PORT,
   val token: String = "",
   val modelName: String = "",
+  val allowLanNoAuth: Boolean = false,
+  val noAuthSubnetCidr: String = "192.168.192.0/24",
   val error: String? = null,
 )
 
@@ -54,6 +56,12 @@ object PhoneOpenAiServerStore {
   @Volatile var availableModels: List<Model> = emptyList()
     private set
 
+  @Volatile var allowLanNoAuth: Boolean = false
+    private set
+
+  @Volatile var noAuthSubnetCidr: String = "192.168.192.0/24"
+    private set
+
   fun setCurrentModel(model: Model?) {
     currentModel = model
     if (model != null) {
@@ -63,6 +71,12 @@ object PhoneOpenAiServerStore {
 
   fun setAvailableModels(models: List<Model>) {
     availableModels = models.filter { it.isLlm }
+  }
+
+  fun setLanAuthBypass(enabled: Boolean, subnetCidr: String = "192.168.192.0/24") {
+    allowLanNoAuth = enabled
+    noAuthSubnetCidr = subnetCidr
+    _state.update { it.copy(allowLanNoAuth = enabled, noAuthSubnetCidr = subnetCidr) }
   }
 
   fun beginStarting(token: String, port: Int = PHONE_SERVER_PORT) {
@@ -85,6 +99,8 @@ object PhoneOpenAiServerStore {
         port = port,
         token = token,
         modelName = modelName,
+        allowLanNoAuth = allowLanNoAuth,
+        noAuthSubnetCidr = noAuthSubnetCidr,
         error = null,
       )
     }
@@ -101,6 +117,8 @@ object PhoneOpenAiServerStore {
         host = "",
         port = PHONE_SERVER_PORT,
         token = "",
+        allowLanNoAuth = false,
+        noAuthSubnetCidr = "192.168.192.0/24",
         error = null,
       )
     }
@@ -115,13 +133,27 @@ object PhoneOpenAiServerStore {
     _state.update { it.copy(token = token) }
     return token
   }
+
+  fun setToken(token: String) {
+    if (token.isBlank()) {
+      return
+    }
+    _state.update { it.copy(token = token) }
+  }
 }
 
 object PhoneOpenAiServerManager {
   const val ACTION_START = "com.google.ai.edge.gallery.server.action.START"
   const val ACTION_STOP = "com.google.ai.edge.gallery.server.action.STOP"
 
-  fun start(context: Context, model: Model, availableModels: List<Model>): String? {
+  fun start(
+    context: Context,
+    model: Model,
+    availableModels: List<Model>,
+    serverToken: String? = null,
+    allowLanNoAuth: Boolean = false,
+    noAuthSubnetCidr: String = "192.168.192.0/24",
+  ): String? {
     val curStatus = PhoneOpenAiServerStore.state.value.status
     if (curStatus == PhoneOpenAiServerStatus.STARTING || curStatus == PhoneOpenAiServerStatus.RUNNING) {
       return null
@@ -135,6 +167,10 @@ object PhoneOpenAiServerManager {
 
     PhoneOpenAiServerStore.setCurrentModel(model)
     PhoneOpenAiServerStore.setAvailableModels(availableModels)
+    PhoneOpenAiServerStore.setLanAuthBypass(allowLanNoAuth, noAuthSubnetCidr)
+    if (!serverToken.isNullOrBlank()) {
+      PhoneOpenAiServerStore.setToken(serverToken)
+    }
     val token = PhoneOpenAiServerStore.ensureToken()
     PhoneOpenAiServerStore.beginStarting(token = token)
 

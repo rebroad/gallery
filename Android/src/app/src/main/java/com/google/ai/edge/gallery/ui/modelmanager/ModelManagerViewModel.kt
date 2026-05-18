@@ -918,7 +918,7 @@ constructor(
 
         if (modelAllowlist == null) {
           // Load from github.
-          var version = BuildConfig.VERSION_NAME.replace(".", "_")
+          val version = BuildConfig.VERSION_NAME.substringBefore("-").replace(".", "_")
           val url = getAllowlistUrl(version)
           Log.d(TAG, "Loading model allowlist from internet. Url: $url")
           val data = getJsonResponse<ModelAllowlist>(url = url)
@@ -1057,7 +1057,7 @@ constructor(
   private fun saveModelAllowlistToDisk(modelAllowlistContent: String) {
     try {
       Log.d(TAG, "Saving model allowlist to disk...")
-      val file = File(externalFilesDir, MODEL_ALLOWLIST_FILENAME)
+      val file = File(resolveModelAllowlistBaseDir(), MODEL_ALLOWLIST_FILENAME)
       file.writeText(modelAllowlistContent)
       Log.d(TAG, "Done: saving model allowlist to disk.")
     } catch (e: Exception) {
@@ -1071,7 +1071,11 @@ constructor(
     try {
       Log.d(TAG, "Reading model allowlist from disk: $fileName")
       val baseDir =
-        if (fileName == MODEL_ALLOWLIST_TEST_FILENAME) File("/data/local/tmp") else externalFilesDir
+        if (fileName == MODEL_ALLOWLIST_TEST_FILENAME) {
+          File("/data/local/tmp")
+        } else {
+          resolveModelAllowlistBaseDir()
+        }
       val file = File(baseDir, fileName)
       if (file.exists()) {
         val content = file.readText()
@@ -1086,6 +1090,10 @@ constructor(
     }
 
     return null
+  }
+
+  private fun resolveModelAllowlistBaseDir(): File {
+    return context.filesDir
   }
 
   private fun isModelPartiallyDownloaded(model: Model): Boolean {
@@ -1475,7 +1483,52 @@ constructor(
           listOf(model.normalizedName, version, model.unzipDir).joinToString(File.separator)
         )
 
-    return downloadedFileExists || unzippedDirectoryExists
+    if (downloadedFileExists || unzippedDirectoryExists) {
+      return true
+    }
+
+    val discoveredVersion = findDownloadedModelVersion(model = model, fileName = fileName)
+    if (!discoveredVersion.isNullOrEmpty()) {
+      model.version = discoveredVersion
+      model.downloadFileName = fileName
+      return true
+    }
+
+    return false
+  }
+
+  private fun findDownloadedModelVersion(model: Model, fileName: String): String? {
+    if (fileName.isEmpty()) {
+      return null
+    }
+    val baseDir = context.getExternalFilesDir(null) ?: return null
+    val modelDir = File(baseDir, model.normalizedName)
+    Log.d(
+      TAG,
+      "Fallback scan for '${model.name}': baseDir=${baseDir.absolutePath}, modelDir=${modelDir.absolutePath}, exists=${modelDir.exists()}, isDir=${modelDir.isDirectory}",
+    )
+    if (!modelDir.exists() || !modelDir.isDirectory) {
+      return null
+    }
+    val versionDirs = modelDir.listFiles()?.filter { it.isDirectory } ?: return null
+    for (versionDir in versionDirs) {
+      val directModelFile = File(versionDir, fileName)
+      if (directModelFile.exists()) {
+        Log.d(
+          TAG,
+          "Found downloaded model '${model.name}' under version '${versionDir.name}' via fallback scan.",
+        )
+        return versionDir.name
+      }
+      if (model.isZip && model.unzipDir.isNotEmpty() && File(versionDir, model.unzipDir).exists()) {
+        Log.d(
+          TAG,
+          "Found downloaded zip model '${model.name}' under version '${versionDir.name}' via fallback scan.",
+        )
+        return versionDir.name
+      }
+    }
+    return null
   }
 }
 

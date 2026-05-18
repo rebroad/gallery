@@ -169,7 +169,7 @@ class PhoneOpenAiServerService : Service() {
   }
 
   private suspend fun startServer() {
-    val model = PhoneOpenAiServerStore.currentModel
+    val model = resolveModelToServe()
     val instance = model?.instance as? LlmModelInstance
     if (model == null || instance == null) {
       PhoneOpenAiServerStore.setError("Initialize the selected model before starting the server.")
@@ -272,7 +272,9 @@ class PhoneOpenAiServerService : Service() {
         val authOk =
           request.headers["authorization"] ==
             "Bearer ${PhoneOpenAiServerStore.state.value.token}"
-        if (!authOk && request.path != "/health") {
+        val allowLanNoAuth =
+          PhoneOpenAiServerStore.allowLanNoAuth && isInLanBypassSubnet(client.inetAddress.hostAddress)
+        if (!authOk && request.path != "/health" && !allowLanNoAuth) {
           writeJsonResponse(
             client,
             401,
@@ -422,12 +424,31 @@ class PhoneOpenAiServerService : Service() {
     val completed = CompletableDeferred<Unit>()
 
     requestMutex.withLock {
-      conversation.sendMessageAsync(
-        Contents.of(promptMessage.extractText()),
-        object : MessageCallback {
-          override fun onMessage(message: Message) {
-            val delta = message.toString()
-            if (delta.isNotEmpty()) {
+      try {
+        conversation.sendMessageAsync(
+          Contents.of(promptMessage.extractText()),
+          object : MessageCallback {
+            override fun onMessage(message: Message) {
+              val delta = message.toString()
+              if (delta.isNotEmpty()) {
+                writeSseEvent(
+                  writer,
+                  OpenAiChatCompletionChunk(
+                    id = id,
+                    created = created,
+                    model = model.name,
+                    choices =
+                      listOf(
+                        OpenAiChatChoice(
+                          delta = OpenAiChatCompletionMessage(content = delta),
+                        )
+                      ),
+                  ),
+                )
+              }
+            }
+
+            override fun onDone() {
               writeSseEvent(
                 writer,
                 OpenAiChatCompletionChunk(
@@ -437,66 +458,53 @@ class PhoneOpenAiServerService : Service() {
                   choices =
                     listOf(
                       OpenAiChatChoice(
-                        delta = OpenAiChatCompletionMessage(content = delta),
+                        delta = OpenAiChatCompletionMessage(content = ""),
+                        finish_reason = "stop",
                       )
                     ),
                 ),
               )
+              writer.write("data: [DONE]\n\n")
+              writer.flush()
+              if (!completed.isCompleted) {
+                completed.complete(Unit)
+              }
             }
-          }
 
-          override fun onDone() {
-            writeSseEvent(
-              writer,
-              OpenAiChatCompletionChunk(
-                id = id,
-                created = created,
-                model = model.name,
-                choices =
-                  listOf(
-                    OpenAiChatChoice(
-                      delta = OpenAiChatCompletionMessage(content = ""),
-                      finish_reason = "stop",
-                    )
-                  ),
-              ),
-            )
-            writer.write("data: [DONE]\n\n")
-            writer.flush()
-            if (!completed.isCompleted) {
-              completed.complete(Unit)
+            override fun onError(throwable: Throwable) {
+              val finishReason = if (throwable is CancellationException) "cancelled" else "error"
+              writeSseEvent(
+                writer,
+                jsonObjectOf(
+                  "id" to id,
+                  "object" to "chat.completion.chunk",
+                  "created" to created,
+                  "model" to model.name,
+                  "choices" to
+                    listOf(
+                      mapOf(
+                        "index" to 0,
+                        "delta" to mapOf("content" to ""),
+                        "finish_reason" to finishReason,
+                      )
+                    ),
+                ),
+              )
+              writer.write("data: [DONE]\n\n")
+              writer.flush()
+              if (!completed.isCompleted) {
+                completed.complete(Unit)
+              }
             }
-          }
-
-          override fun onError(throwable: Throwable) {
-            val finishReason = if (throwable is CancellationException) "cancelled" else "error"
-            writeSseEvent(
-              writer,
-              jsonObjectOf(
-                "id" to id,
-                "object" to "chat.completion.chunk",
-                "created" to created,
-                "model" to model.name,
-                "choices" to
-                  listOf(
-                    mapOf(
-                      "index" to 0,
-                      "delta" to mapOf("content" to ""),
-                      "finish_reason" to finishReason,
-                    )
-                  ),
-              ),
-            )
-            writer.write("data: [DONE]\n\n")
-            writer.flush()
-            if (!completed.isCompleted) {
-              completed.complete(Unit)
-            }
-          }
-        },
-      )
+          },
+        )
+        completed.await()
+      } finally {
+        if (!completed.isCompleted) {
+          completed.complete(Unit)
+        }
+      }
     }
-    completed.await()
   }
 
   private fun buildConversation(
@@ -658,6 +666,34 @@ class PhoneOpenAiServerService : Service() {
       }
     }
     return null
+  }
+
+  private fun resolveModelToServe(): Model? {
+    PhoneOpenAiServerStore.currentModel?.let { return it }
+    val available = PhoneOpenAiServerStore.availableModels
+    if (available.isEmpty()) {
+      return null
+    }
+    available.firstOrNull { it.name.contains("Gemma_4_E2B_it", ignoreCase = true) }?.let {
+      PhoneOpenAiServerStore.setCurrentModel(it)
+      return it
+    }
+    available.firstOrNull { it.name.contains("Gemma", ignoreCase = true) }?.let {
+      PhoneOpenAiServerStore.setCurrentModel(it)
+      return it
+    }
+    val first = available.first()
+    PhoneOpenAiServerStore.setCurrentModel(first)
+    return first
+  }
+
+  private fun isInLanBypassSubnet(hostAddress: String?): Boolean {
+    if (hostAddress.isNullOrBlank()) {
+      return false
+    }
+    val subnet = PhoneOpenAiServerStore.noAuthSubnetCidr
+    val prefix = subnet.substringBefore("/").trim()
+    return prefix.isNotEmpty() && hostAddress.startsWith(prefix.substringBeforeLast(".") + ".")
   }
 
   private fun jsonObjectOf(vararg pairs: Pair<String, Any?>): JsonObject {

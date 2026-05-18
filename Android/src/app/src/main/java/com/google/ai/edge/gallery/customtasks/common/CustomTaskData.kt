@@ -46,4 +46,12 @@ data class CustomTaskDataForBuiltinTask(
   val onNavUp: () -> Unit,
   // The initial query to be sent to the model when the screen is first loaded.
   val initialQuery: String? = null,
+  // Whether the phone-hosted server should auto-start when the chat screen opens.
+  val autoStartServer: Boolean = false,
+  // Optional bearer token to use for the phone-hosted server.
+  val serverToken: String? = null,
+  // Allow clients from the local LAN subnet to skip bearer auth.
+  val allowLanNoAuth: Boolean = false,
+  // CIDR subnet that may bypass auth when allowLanNoAuth is enabled.
+  val lanNoAuthSubnetCidr: String = "192.168.192.0/24",
 )

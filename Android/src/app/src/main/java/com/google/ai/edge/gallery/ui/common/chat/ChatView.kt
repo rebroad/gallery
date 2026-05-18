@@ -145,6 +145,10 @@ fun ChatView(
   curSystemPrompt: String = "",
   onSystemPromptChanged: (String) -> Unit = {},
   sendMessageTrigger: SendMessageTrigger? = null,
+  autoStartServer: Boolean = false,
+  serverToken: String? = null,
+  allowLanNoAuth: Boolean = false,
+  lanNoAuthSubnetCidr: String = "192.168.192.0/24",
 ) {
   val uiState by viewModel.uiState.collectAsState()
   val modelManagerUiState by modelManagerViewModel.uiState.collectAsState()
@@ -204,6 +208,23 @@ fun ChatView(
 
   LaunchedEffect(sendMessageTrigger) {
     sendMessageTrigger?.let { trigger -> onSendMessage(trigger.model, trigger.messages) }
+  }
+
+  LaunchedEffect(autoStartServer, selectedModel.name, selectedModel.instance) {
+    if (
+      autoStartServer &&
+      selectedModel.instance != null &&
+        PhoneOpenAiServerManager.start(
+          context = context,
+          model = selectedModel,
+          availableModels = modelManagerViewModel.getAllDownloadedModels(),
+          serverToken = serverToken,
+          allowLanNoAuth = allowLanNoAuth,
+          noAuthSubnetCidr = lanNoAuthSubnetCidr,
+        ) == null
+    ) {
+      Log.d(TAG, "Auto-started phone server for model '${selectedModel.name}'")
+    }
   }
 
   // Handle system's edge swipe.
@@ -367,6 +388,8 @@ fun ChatView(
                     context = context,
                     model = selectedModel,
                     availableModels = modelManagerViewModel.getAllDownloadedModels(),
+                    allowLanNoAuth = allowLanNoAuth,
+                    noAuthSubnetCidr = lanNoAuthSubnetCidr,
                   )
                 }
               },
