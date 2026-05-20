@@ -45,6 +45,7 @@ import com.google.ai.edge.gallery.data.ModelAllowlist
 import com.google.ai.edge.gallery.data.ModelCapability
 import com.google.ai.edge.gallery.data.ModelDownloadStatus
 import com.google.ai.edge.gallery.data.ModelDownloadStatusType
+import com.google.ai.edge.gallery.data.SharedModelStorage
 import com.google.ai.edge.gallery.data.NumberSliderConfig
 import com.google.ai.edge.gallery.data.RuntimeType
 import com.google.ai.edge.gallery.data.SOC
@@ -201,6 +202,7 @@ constructor(
   @ApplicationContext private val context: Context,
 ) : ViewModel() {
   private val externalFilesDir = context.getExternalFilesDir(null)
+  private val sharedModelStorageDir = SharedModelStorage.sharedRootDir()
   protected val _uiState = MutableStateFlow(createEmptyUiState())
   open val uiState = _uiState.asStateFlow()
 
@@ -535,7 +537,7 @@ constructor(
       status.status == ModelDownloadStatusType.FAILED ||
         status.status == ModelDownloadStatusType.NOT_DOWNLOADED
     ) {
-      deleteFileFromExternalFilesDir(curModel.downloadFileName)
+      deleteDownloadedModelFiles(curModel)
     }
 
     _uiState.update { it.copy(modelDownloadStatus = curModelDownloadStatus) }
@@ -1379,16 +1381,38 @@ constructor(
     }
   }
 
+  private fun isFileInSharedModelStorage(fileName: String): Boolean {
+    val file = File(sharedModelStorageDir, fileName)
+    return file.exists()
+  }
+
   private fun isFileInDataLocalTmpDir(fileName: String): Boolean {
     val file = File("/data/local/tmp", fileName)
     return file.exists()
   }
 
-  private fun deleteFileFromExternalFilesDir(fileName: String) {
-    if (isFileInExternalFilesDir(fileName)) {
-      val file = File(externalFilesDir, fileName)
+  private fun deleteDownloadedModelFiles(model: Model) {
+    val file = File(model.getPath(context = context))
+    if (file.exists()) {
       file.delete()
     }
+    val tmpFile = File("${file.absolutePath}.$TMP_FILE_EXT")
+    if (tmpFile.exists()) {
+      tmpFile.delete()
+    }
+    if (model.isZip && model.unzipDir.isNotEmpty()) {
+      file.parentFile?.let { deleteRecursively(File(it, model.unzipDir)) }
+    }
+  }
+
+  private fun deleteRecursively(file: File) {
+    if (!file.exists()) {
+      return
+    }
+    if (file.isDirectory) {
+      file.listFiles()?.forEach { deleteRecursively(it) }
+    }
+    file.delete()
   }
 
   /**
@@ -1472,14 +1496,14 @@ constructor(
     val downloadedFileExists =
       fileName.isNotEmpty() &&
         ((model.localModelFilePathOverride.isEmpty() &&
-          isFileInExternalFilesDir(modelRelativePath)) ||
+          isFileInSharedModelStorage(modelRelativePath)) ||
           (model.localModelFilePathOverride.isNotEmpty() &&
             File(model.localModelFilePathOverride).exists()))
 
     val unzippedDirectoryExists =
       model.isZip &&
         model.unzipDir.isNotEmpty() &&
-        isFileInExternalFilesDir(
+        isFileInSharedModelStorage(
           listOf(model.normalizedName, version, model.unzipDir).joinToString(File.separator)
         )
 
@@ -1501,34 +1525,82 @@ constructor(
     if (fileName.isEmpty()) {
       return null
     }
-    val baseDir = context.getExternalFilesDir(null) ?: return null
-    val modelDir = File(baseDir, model.normalizedName)
-    Log.d(
-      TAG,
-      "Fallback scan for '${model.name}': baseDir=${baseDir.absolutePath}, modelDir=${modelDir.absolutePath}, exists=${modelDir.exists()}, isDir=${modelDir.isDirectory}",
-    )
-    if (!modelDir.exists() || !modelDir.isDirectory) {
-      return null
-    }
-    val versionDirs = modelDir.listFiles()?.filter { it.isDirectory } ?: return null
-    for (versionDir in versionDirs) {
-      val directModelFile = File(versionDir, fileName)
-      if (directModelFile.exists()) {
+    val candidateRoots =
+      listOfNotNull(
+        sharedModelStorageDir,
+        context.getExternalFilesDir(null),
+        File("/storage/emulated/0/Android/data/com.google.ai.edge.gallery/files"),
+      )
+        .distinctBy { it.absolutePath }
+    for (baseDir in candidateRoots) {
+      val modelDir = File(baseDir, model.normalizedName)
+      Log.d(
+        TAG,
+        "Fallback scan for '${model.name}': baseDir=${baseDir.absolutePath}, modelDir=${modelDir.absolutePath}, exists=${modelDir.exists()}, isDir=${modelDir.isDirectory}",
+      )
+      if (!modelDir.exists() || !modelDir.isDirectory) {
+        continue
+      }
+      val versionDirs = modelDir.listFiles()?.filter { it.isDirectory } ?: continue
+      for (versionDir in versionDirs) {
+        val directModelFile = File(versionDir, fileName)
+        val found =
+          directModelFile.exists() ||
+            (model.isZip && model.unzipDir.isNotEmpty() && File(versionDir, model.unzipDir).exists())
+        if (!found) {
+          continue
+        }
+        if (baseDir.absolutePath != sharedModelStorageDir.absolutePath) {
+          val targetVersionDir = File(File(sharedModelStorageDir, model.normalizedName), versionDir.name)
+          Log.d(
+            TAG,
+            "Migrating downloaded model '${model.name}' from ${versionDir.absolutePath} to ${targetVersionDir.absolutePath}",
+          )
+          if (copyRecursively(versionDir, targetVersionDir)) {
+            if (baseDir == context.getExternalFilesDir(null)) {
+              deleteRecursively(versionDir)
+            }
+            return versionDir.name
+          }
+          Log.w(
+            TAG,
+            "Failed to migrate downloaded model '${model.name}' from ${versionDir.absolutePath} to shared storage.",
+          )
+          continue
+        }
         Log.d(
           TAG,
           "Found downloaded model '${model.name}' under version '${versionDir.name}' via fallback scan.",
         )
         return versionDir.name
       }
-      if (model.isZip && model.unzipDir.isNotEmpty() && File(versionDir, model.unzipDir).exists()) {
-        Log.d(
-          TAG,
-          "Found downloaded zip model '${model.name}' under version '${versionDir.name}' via fallback scan.",
-        )
-        return versionDir.name
-      }
     }
     return null
+  }
+
+  private fun copyRecursively(source: File, destination: File): Boolean {
+    return try {
+      if (source.isDirectory) {
+        if (destination.exists()) {
+          deleteRecursively(destination)
+        }
+        if (!destination.exists() && !destination.mkdirs()) {
+          return false
+        }
+        source.listFiles()?.all { child ->
+          copyRecursively(child, File(destination, child.name))
+        } ?: true
+      } else {
+        destination.parentFile?.let { if (!it.exists() && !it.mkdirs()) return false }
+        source.inputStream().use { input ->
+          destination.outputStream().use { output -> input.copyTo(output) }
+        }
+        true
+      }
+    } catch (e: Exception) {
+      Log.w(TAG, "Failed to copy ${source.absolutePath} to ${destination.absolutePath}", e)
+      false
+    }
   }
 }
 

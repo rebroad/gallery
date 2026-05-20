@@ -33,6 +33,7 @@ import com.google.ai.edge.gallery.data.KEY_MODEL_DOWNLOAD_ACCESS_TOKEN
 import com.google.ai.edge.gallery.data.KEY_MODEL_DOWNLOAD_ERROR_MESSAGE
 import com.google.ai.edge.gallery.data.KEY_MODEL_DOWNLOAD_FILE_NAME
 import com.google.ai.edge.gallery.data.KEY_MODEL_DOWNLOAD_MODEL_DIR
+import com.google.ai.edge.gallery.data.KEY_MODEL_DOWNLOAD_OUTPUT_DIR
 import com.google.ai.edge.gallery.data.KEY_MODEL_DOWNLOAD_RATE
 import com.google.ai.edge.gallery.data.KEY_MODEL_DOWNLOAD_RECEIVED_BYTES
 import com.google.ai.edge.gallery.data.KEY_MODEL_DOWNLOAD_REMAINING_MS
@@ -45,6 +46,7 @@ import com.google.ai.edge.gallery.data.KEY_MODEL_TOTAL_BYTES
 import com.google.ai.edge.gallery.data.KEY_MODEL_UNZIPPED_DIR
 import com.google.ai.edge.gallery.data.KEY_MODEL_URL
 import com.google.ai.edge.gallery.data.TMP_FILE_EXT
+import com.google.ai.edge.gallery.data.SharedModelStorage
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileInputStream
@@ -66,8 +68,6 @@ private var channelCreated = false
 
 class DownloadWorker(context: Context, params: WorkerParameters) :
   CoroutineWorker(context, params) {
-  private val externalFilesDir = context.getExternalFilesDir(null)
-
   private val notificationManager =
     context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
@@ -96,6 +96,7 @@ class DownloadWorker(context: Context, params: WorkerParameters) :
     val version = inputData.getString(KEY_MODEL_COMMIT_HASH)!!
     val fileName = inputData.getString(KEY_MODEL_DOWNLOAD_FILE_NAME)
     val modelDir = inputData.getString(KEY_MODEL_DOWNLOAD_MODEL_DIR)!!
+    val outputDirPath = inputData.getString(KEY_MODEL_DOWNLOAD_OUTPUT_DIR)
     val isZip = inputData.getBoolean(KEY_MODEL_IS_ZIP, false)
     val unzippedDir = inputData.getString(KEY_MODEL_UNZIPPED_DIR)
     val extraDataFileUrls = inputData.getString(KEY_MODEL_EXTRA_DATA_URLS)?.split(",") ?: listOf()
@@ -138,21 +139,15 @@ class DownloadWorker(context: Context, params: WorkerParameters) :
 
             // Prepare output file's dir.
             val outputDir =
-              File(
-                applicationContext.getExternalFilesDir(null),
-                listOf(modelDir, version).joinToString(separator = File.separator),
-              )
+              outputDirPath?.let { File(it) } ?: SharedModelStorage.versionDir(modelDir, version)
             if (!outputDir.exists()) {
               outputDir.mkdirs()
             }
 
             // Read the tmp file and see if it is partially downloaded.
             val outputTmpFile =
-              File(
-                applicationContext.getExternalFilesDir(null),
-                listOf(modelDir, version, "${file.fileName}.$TMP_FILE_EXT")
-                  .joinToString(separator = File.separator),
-              )
+              File(outputDir, "${file.fileName}.$TMP_FILE_EXT")
+            outputTmpFile.parentFile?.let { if (!it.exists()) it.mkdirs() }
             val outputFileBytes = outputTmpFile.length()
             if (outputFileBytes > 0) {
               Log.d(
@@ -250,8 +245,8 @@ class DownloadWorker(context: Context, params: WorkerParameters) :
             inputStream.close()
 
             // Rename the tmp file to the original file name by removing the tmp file ext.
-            val originalFilePath = outputTmpFile.absolutePath.replace(".$TMP_FILE_EXT", "")
-            val originalFile = File(originalFilePath)
+            val originalFile = File(outputDir, file.fileName)
+            originalFile.parentFile?.let { if (!it.exists()) it.mkdirs() }
             if (originalFile.exists()) {
               originalFile.delete()
             }
@@ -263,19 +258,14 @@ class DownloadWorker(context: Context, params: WorkerParameters) :
               setProgress(Data.Builder().putBoolean(KEY_MODEL_START_UNZIPPING, true).build())
 
               // Prepare target dir.
-              val destDir =
-                File(
-                  externalFilesDir,
-                  listOf(modelDir, version, unzippedDir).joinToString(File.separator),
-                )
+              val destDir = File(outputDir, unzippedDir)
               if (!destDir.exists()) {
                 destDir.mkdirs()
               }
 
               // Unzip.
               val unzipBuffer = ByteArray(4096)
-              val zipFilePath =
-                "${externalFilesDir}${File.separator}$modelDir${File.separator}$version${File.separator}${fileName}"
+              val zipFilePath = File(outputDir, fileName).absolutePath
               val zipIn = ZipInputStream(BufferedInputStream(FileInputStream(zipFilePath)))
               var zipEntry: ZipEntry? = zipIn.nextEntry
 
