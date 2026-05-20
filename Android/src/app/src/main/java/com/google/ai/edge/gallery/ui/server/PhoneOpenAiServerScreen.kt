@@ -175,16 +175,6 @@ fun PhoneOpenAiServerScreen(
             style = MaterialTheme.typography.titleLarge,
             color = MaterialTheme.colorScheme.onSurface,
           )
-          Text(
-            text =
-              if (selectedModelDownloaded) {
-                stringResource(R.string.downloaded)
-              } else {
-                stringResource(R.string.model_not_downloaded_msg)
-              },
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-          )
           Spacer(modifier = Modifier.height(4.dp))
           Button(
             onClick = {
