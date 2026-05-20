@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -72,7 +73,9 @@ fun PhoneOpenAiServerScreen(
   val selectedDownloadStatus = modelManagerUiState.modelDownloadStatus[selectedModel.name]
   val selectedModelDownloaded =
     selectedDownloadStatus?.status == ModelDownloadStatusType.SUCCEEDED
-  val availableBindAddresses = modelManagerViewModel.getPhoneServerBindAddresses()
+  var availableBindAddresses by remember {
+    mutableStateOf(modelManagerViewModel.getPhoneServerBindAddresses())
+  }
   var bindMenuExpanded by remember { mutableStateOf(false) }
   var portText by remember(serverState.port) { mutableStateOf(serverState.port.toString()) }
   val isRunning = serverState.status == PhoneOpenAiServerStatus.RUNNING
@@ -91,6 +94,9 @@ fun PhoneOpenAiServerScreen(
     } else {
       serverState.preferredBindAddress
     }
+  fun refreshBindAddresses() {
+    availableBindAddresses = modelManagerViewModel.getPhoneServerBindAddresses()
+  }
 
   Scaffold(
     modifier = modifier,
@@ -221,7 +227,13 @@ fun PhoneOpenAiServerScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
           )
           Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { bindMenuExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+            Button(
+              onClick = {
+                refreshBindAddresses()
+                bindMenuExpanded = true
+              },
+              modifier = Modifier.fillMaxWidth(),
+            ) {
               Text(text = selectedBindAddressLabel)
             }
             DropdownMenu(
@@ -262,32 +274,31 @@ fun PhoneOpenAiServerScreen(
             },
             label = { Text(stringResource(R.string.phone_server_port_label)) },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+            textStyle = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.widthIn(max = 160.dp),
           )
 
-          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-              text = stringResource(R.string.phone_server_auto_start_label),
-              style = MaterialTheme.typography.labelLarge,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Row(
-              modifier = Modifier.fillMaxWidth(),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Column(modifier = Modifier.weight(1f)) {
+              Text(
+                text = stringResource(R.string.phone_server_auto_start_label),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+              )
               Text(
                 text = stringResource(R.string.phone_server_auto_start_hint),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.weight(1f),
-              )
-              Spacer(modifier = Modifier.width(12.dp))
-              Switch(
-                checked = serverState.autoStartOnAppLaunch,
-                onCheckedChange = { checked -> modelManagerViewModel.setPhoneServerAutoStart(checked) },
               )
             }
+            Spacer(modifier = Modifier.width(12.dp))
+            Switch(
+              checked = serverState.autoStartOnAppLaunch,
+              onCheckedChange = { checked -> modelManagerViewModel.setPhoneServerAutoStart(checked) },
+            )
           }
         }
       }
