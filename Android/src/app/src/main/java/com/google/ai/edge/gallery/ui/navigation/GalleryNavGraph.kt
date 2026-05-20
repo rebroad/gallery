@@ -88,6 +88,7 @@ import com.google.ai.edge.gallery.ui.modelmanager.ModelInitializationStatusType
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManager
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
 import com.google.ai.edge.gallery.ui.notifications.NotificationsScreen
+import com.google.ai.edge.gallery.ui.server.PhoneOpenAiServerScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -99,6 +100,7 @@ private const val ROUTE_MODEL = "route_model"
 private const val ROUTE_BENCHMARK = "benchmark"
 private const val ROUTE_MODEL_MANAGER = "model_manager"
 private const val ROUTE_NOTIFICATIONS = "notifications"
+private const val ROUTE_PHONE_SERVER = "phone_server"
 private const val ENTER_ANIMATION_DURATION_MS = 500
 private val ENTER_ANIMATION_EASING = EaseOutExpo
 private const val ENTER_ANIMATION_DELAY_MS = 100
@@ -212,6 +214,7 @@ fun GalleryNavHost(
               )
             },
             onModelsClicked = { navController.navigate(ROUTE_MODEL_MANAGER) },
+            onHttpServerClicked = { navController.navigate(ROUTE_PHONE_SERVER) },
             onNotificationsClicked = { navController.navigate(ROUTE_NOTIFICATIONS) },
             gm4 = true,
           )
@@ -457,6 +460,22 @@ fun GalleryNavHost(
           )
           navController.navigate("$ROUTE_BENCHMARK/${model.name}")
         },
+      )
+    }
+
+    // Phone HTTP server page.
+    composable(
+      route = ROUTE_PHONE_SERVER,
+      enterTransition = { slideUpEnter() },
+      exitTransition = { slideDownExit() },
+    ) {
+      PhoneOpenAiServerScreen(
+        modelManagerViewModel = modelManagerViewModel,
+        navigateUp = {
+          enableHomeScreenAnimation = false
+          navController.navigateUp()
+        },
+        modifier = modifier,
       )
     }
 

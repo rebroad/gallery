@@ -88,11 +88,14 @@
   <string name="dismiss" translatable="false">Dismiss</string>
   <string name="done" translatable="false">Done</string>
   <string name="download" translatable="false">Download</string>
+  <string name="downloaded" translatable="false">Downloaded</string>
   <string name="downloaded_size" translatable="false">%1$s downloaded</string>
   <string name="drawer_settings_label" translatable="false">Settings</string>
   <string name="drawer_settings_description" translatable="false">Manage application settings</string>
   <string name="drawer_models_label" translatable="false">Models</string>
   <string name="drawer_models_description" translatable="false">Browse, try, and benchmark models</string>
+  <string name="drawer_http_server_label" translatable="false">HTTP Server</string>
+  <string name="drawer_http_server_description" translatable="false">Host the selected model over the network</string>
   <string name="drawer_notifications_label" translatable="false">Notifications</string>
   <string name="drawer_notifications_description" translatable="false">View scheduled notifications</string>
   <string name="notifications_title" translatable="false">Notifications</string>
@@ -103,6 +106,24 @@
   <string name="notifications_date_label" translatable="false">Date: %s</string>
   <string name="notifications_repeat_daily" translatable="false">Daily</string>
   <string name="notifications_repeat_one_time" translatable="false">One-time</string>
+  <string name="phone_server_title" translatable="false">HTTP Server</string>
+  <string name="phone_server_subtitle" translatable="false">Start and stop the phone-hosted OpenAI-compatible server</string>
+  <string name="phone_server_status_running" translatable="false">Running</string>
+  <string name="phone_server_status_starting" translatable="false">Starting</string>
+  <string name="phone_server_status_stopped" translatable="false">Stopped</string>
+  <string name="phone_server_status_error" translatable="false">Error</string>
+  <string name="phone_server_status_label" translatable="false">Status</string>
+  <string name="phone_server_active_model_label" translatable="false">Active model</string>
+  <string name="phone_server_endpoint_label" translatable="false">LAN endpoint</string>
+  <string name="phone_server_listen_hint" translatable="false">Start the server to expose the current model over HTTP on your LAN.</string>
+  <string name="phone_server_stop" translatable="false">Stop server</string>
+  <string name="phone_server_start" translatable="false">Start server</string>
+  <string name="phone_server_bind_address_label" translatable="false">Listen on</string>
+  <string name="phone_server_bind_address_auto" translatable="false">Automatic</string>
+  <string name="phone_server_bind_address_hint" translatable="false">Choose the network interface or address to bind the server to.</string>
+  <string name="phone_server_port_label" translatable="false">Port</string>
+  <string name="phone_server_auto_start_label" translatable="false">Start on app launch</string>
+  <string name="phone_server_auto_start_hint" translatable="false">Automatically start the server when Gallery opens.</string>
   <string name="edit" translatable="false">Edit</string>
   <string name="edit_secret" translatable="false">Edit secret</string>
   <string name="enter_instruction" translatable="false">Enter instruction</string>

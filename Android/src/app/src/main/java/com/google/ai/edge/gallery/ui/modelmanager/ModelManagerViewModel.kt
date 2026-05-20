@@ -58,7 +58,9 @@ import com.google.ai.edge.gallery.proto.AccessTokenData
 import com.google.ai.edge.gallery.proto.ImportedModel
 import com.google.ai.edge.gallery.proto.Theme
 import com.google.ai.edge.gallery.runtime.aicore.AICoreModelHelper
+import com.google.ai.edge.gallery.server.PHONE_SERVER_PORT
 import com.google.ai.edge.gallery.server.PhoneOpenAiServerStore
+import com.google.ai.edge.gallery.server.listBindableLanAddresses
 import com.google.ai.edge.litertlm.Contents
 import com.google.gson.Gson
 import com.google.gson.JsonSyntaxException
@@ -82,6 +84,9 @@ import net.openid.appauth.ResponseTypeValues
 
 private const val TAG = "AGModelManagerViewModel"
 private const val ACTIVE_MODEL_SECRET_KEY = "active_litertlm_model_name"
+private const val PHONE_SERVER_BIND_ADDRESS_SECRET_KEY = "phone_server_bind_address"
+private const val PHONE_SERVER_PORT_SECRET_KEY = "phone_server_port"
+private const val PHONE_SERVER_AUTO_START_SECRET_KEY = "phone_server_auto_start"
 private const val TEXT_INPUT_HISTORY_MAX_SIZE = 50
 private const val MODEL_ALLOWLIST_FILENAME = "model_allowlist.json"
 private const val MODEL_ALLOWLIST_TEST_FILENAME = "model_allowlist_test.json"
@@ -215,6 +220,15 @@ constructor(
   var curAccessToken: String = ""
 
   init {
+    PhoneOpenAiServerStore.setServerConfig(
+      preferredBindAddress = dataStoreRepository.readSecret(PHONE_SERVER_BIND_ADDRESS_SECRET_KEY) ?: "",
+      port =
+        dataStoreRepository.readSecret(PHONE_SERVER_PORT_SECRET_KEY)?.toIntOrNull()
+          ?: PHONE_SERVER_PORT,
+      autoStartOnAppLaunch =
+        dataStoreRepository.readSecret(PHONE_SERVER_AUTO_START_SECRET_KEY)?.toBooleanStrictOrNull()
+          ?: false,
+    )
     viewModelScope.launch(Dispatchers.Default) {
       PhoneOpenAiServerStore.state.collect { serverState ->
         val modelName = serverState.modelName
@@ -309,6 +323,49 @@ constructor(
       PhoneOpenAiServerStore.setCurrentModel(model)
       dataStoreRepository.saveSecret(ACTIVE_MODEL_SECRET_KEY, model.name)
     }
+  }
+
+  fun getPhoneServerBindAddresses(): List<String> {
+    return listBindableLanAddresses()
+  }
+
+  fun getPhoneServerBindAddress(): String {
+    return PhoneOpenAiServerStore.state.value.preferredBindAddress
+  }
+
+  fun setPhoneServerBindAddress(address: String) {
+    PhoneOpenAiServerStore.setServerConfig(
+      preferredBindAddress = address,
+      port = PhoneOpenAiServerStore.state.value.port,
+      autoStartOnAppLaunch = PhoneOpenAiServerStore.state.value.autoStartOnAppLaunch,
+    )
+    dataStoreRepository.saveSecret(PHONE_SERVER_BIND_ADDRESS_SECRET_KEY, address)
+  }
+
+  fun getPhoneServerPort(): Int {
+    return PhoneOpenAiServerStore.state.value.port
+  }
+
+  fun setPhoneServerPort(port: Int) {
+    PhoneOpenAiServerStore.setServerConfig(
+      preferredBindAddress = PhoneOpenAiServerStore.state.value.preferredBindAddress,
+      port = port,
+      autoStartOnAppLaunch = PhoneOpenAiServerStore.state.value.autoStartOnAppLaunch,
+    )
+    dataStoreRepository.saveSecret(PHONE_SERVER_PORT_SECRET_KEY, port.toString())
+  }
+
+  fun getPhoneServerAutoStart(): Boolean {
+    return PhoneOpenAiServerStore.state.value.autoStartOnAppLaunch
+  }
+
+  fun setPhoneServerAutoStart(autoStart: Boolean) {
+    PhoneOpenAiServerStore.setServerConfig(
+      preferredBindAddress = PhoneOpenAiServerStore.state.value.preferredBindAddress,
+      port = PhoneOpenAiServerStore.state.value.port,
+      autoStartOnAppLaunch = autoStart,
+    )
+    dataStoreRepository.saveSecret(PHONE_SERVER_AUTO_START_SECRET_KEY, autoStart.toString())
   }
 
   open fun downloadModel(task: Task?, model: Model) {

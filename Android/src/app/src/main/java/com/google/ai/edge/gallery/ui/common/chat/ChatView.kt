@@ -332,10 +332,6 @@ fun ChatView(
               inProgress = uiState.inProgress,
               modelPreparing = uiState.preparing,
               shouldShowHistoryButton = true,
-              showServerButton = true,
-              serverReady =
-                modelManagerUiState.modelDownloadStatus[selectedModel.name]?.status ==
-                  ModelDownloadStatusType.SUCCEEDED,
               onConfigChanged = { old, new ->
                 // Filter out config values that are not relevant to the task.
                 //
@@ -381,19 +377,6 @@ fun ChatView(
                   },
                 )
                 scope.launch { drawerState.open() }
-              },
-              onServerClicked = { currentlyRunning ->
-                if (currentlyRunning) {
-                  PhoneOpenAiServerManager.stop(context = context)
-                } else {
-                  PhoneOpenAiServerManager.start(
-                    context = context,
-                    model = selectedModel,
-                    availableModels = modelManagerViewModel.getAllDownloadedModels(),
-                    allowLanNoAuth = allowLanNoAuth,
-                    noAuthSubnetCidr = lanNoAuthSubnetCidr,
-                  )
-                }
               },
             )
           },

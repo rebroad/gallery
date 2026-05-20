@@ -59,6 +59,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ListAlt
 import androidx.compose.material.icons.rounded.Error
 import androidx.compose.material.icons.rounded.Flag
+import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.AlertDialog
@@ -120,7 +121,12 @@ import com.google.ai.edge.gallery.data.AppBarActionType
 import com.google.ai.edge.gallery.data.BuiltInTaskId
 import com.google.ai.edge.gallery.data.Category
 import com.google.ai.edge.gallery.data.CategoryInfo
+import com.google.ai.edge.gallery.data.ModelDownloadStatusType
+import com.google.ai.edge.gallery.data.RuntimeType
 import com.google.ai.edge.gallery.data.Task
+import com.google.ai.edge.gallery.server.PhoneOpenAiServerManager
+import com.google.ai.edge.gallery.server.PhoneOpenAiServerStatus
+import com.google.ai.edge.gallery.server.PhoneOpenAiServerStore
 import com.google.ai.edge.gallery.ui.common.RevealingText
 import com.google.ai.edge.gallery.ui.common.SwipingText
 import com.google.ai.edge.gallery.ui.common.TaskIcon
@@ -163,17 +169,21 @@ fun HomeScreen(
   tosViewModel: TosViewModel,
   navigateToTaskScreen: (Task) -> Unit,
   onModelsClicked: () -> Unit,
+  onHttpServerClicked: () -> Unit,
   onNotificationsClicked: () -> Unit,
   enableAnimation: Boolean,
   modifier: Modifier = Modifier,
   gm4: Boolean = false,
 ) {
   val uiState by modelManagerViewModel.uiState.collectAsState()
+  val serverState by PhoneOpenAiServerStore.state.collectAsState()
   var showSettingsDialog by remember { mutableStateOf(false) }
   var showTosDialog by remember { mutableStateOf(!tosViewModel.getIsTosAccepted()) }
+  var didAutoStartServer by remember { mutableStateOf(false) }
   val scope = rememberCoroutineScope()
   val context = LocalContext.current
   val isDevBuild = context.packageName.endsWith(".dev")
+  val selectedModel = uiState.selectedModel
 
   var tasks = uiState.tasks
 
@@ -211,7 +221,27 @@ fun HomeScreen(
     }
 
   // Show home screen content when TOS has been accepted.
-  if (!showTosDialog) {
+    if (!showTosDialog) {
+    LaunchedEffect(serverState.autoStartOnAppLaunch, selectedModel.name, selectedModel.instance) {
+      if (
+        !didAutoStartServer &&
+        serverState.autoStartOnAppLaunch &&
+        serverState.status == PhoneOpenAiServerStatus.STOPPED &&
+        selectedModel.runtimeType == RuntimeType.LITERT_LM &&
+        uiState.modelDownloadStatus[selectedModel.name]?.status == ModelDownloadStatusType.SUCCEEDED
+      ) {
+        didAutoStartServer = true
+        PhoneOpenAiServerManager.start(
+          context = context,
+          model = selectedModel,
+          availableModels = modelManagerViewModel.getAllDownloadedModels(),
+          serverToken = serverState.token.takeIf { it.isNotBlank() },
+          allowLanNoAuth = serverState.allowLanNoAuth,
+          noAuthSubnetCidr = serverState.noAuthSubnetCidr,
+        )
+      }
+    }
+
     // The code below manages the display of the model allowlist loading indicator with a debounced
     // delay. It ensures that a progress indicator is only shown if the loading operation
     // (represented by `uiState.loadingModelAllowlist`) takes longer than 200 milliseconds.
@@ -329,6 +359,29 @@ fun HomeScreen(
               }
               Spacer(modifier = Modifier.height(16.dp))
               Row(modifier = Modifier.fillMaxWidth()) {
+                SquareDrawerItem(
+                  label = stringResource(R.string.drawer_http_server_label),
+                  description = stringResource(R.string.drawer_http_server_description),
+                  icon = Icons.Rounded.Public,
+                  onClick = {
+                    scope.launch { drawerState.close() }
+                    scope.launch {
+                      delay(50)
+                      onHttpServerClicked()
+                    }
+                  },
+                  modifier = Modifier.weight(1f),
+                  iconBrush =
+                    linearGradient(
+                      colors =
+                        listOf(
+                          MaterialTheme.customColors.taskBgGradientColors[0][0],
+                          MaterialTheme.customColors.taskBgGradientColors[0][1],
+                        )
+                    ),
+                )
+                Spacer(modifier = Modifier.width(16.dp))
+                Spacer(modifier = Modifier.weight(1f))
               }
             }
           }

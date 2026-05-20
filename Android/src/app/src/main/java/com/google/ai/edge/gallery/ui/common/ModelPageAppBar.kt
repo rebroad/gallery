@@ -25,8 +25,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.History
-import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -57,8 +55,6 @@ import com.google.ai.edge.gallery.data.ModelDownloadStatusType
 import com.google.ai.edge.gallery.data.RuntimeType
 import com.google.ai.edge.gallery.data.Task
 import com.google.ai.edge.gallery.data.convertValueToTargetType
-import com.google.ai.edge.gallery.server.PhoneOpenAiServerStatus
-import com.google.ai.edge.gallery.server.PhoneOpenAiServerStore
 import com.google.ai.edge.gallery.ui.modelmanager.ModelInitializationStatusType
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
 
@@ -83,13 +79,9 @@ fun ModelPageAppBar(
   onSystemPromptChanged: (String) -> Unit = {},
   shouldShowHistoryButton: Boolean = false,
   onHistoryClicked: (Model) -> Unit = {},
-  showServerButton: Boolean = false,
-  serverReady: Boolean = false,
-  onServerClicked: (Boolean) -> Unit = {},
 ) {
   var showConfigDialog by remember { mutableStateOf(false) }
   val modelManagerUiState by modelManagerViewModel.uiState.collectAsState()
-  val serverState by PhoneOpenAiServerStore.state.collectAsState()
   val context = LocalContext.current
   val curDownloadStatus = modelManagerUiState.modelDownloadStatus[model.name]
   val modelInitializationStatus = modelManagerUiState.modelInitializationStatus[model.name]
@@ -150,22 +142,6 @@ fun ModelPageAppBar(
       val downloadSucceeded = curDownloadStatus?.status == ModelDownloadStatusType.SUCCEEDED
       val showConfigButton = model.configs.isNotEmpty() && downloadSucceeded
       Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (showServerButton && model.runtimeType == RuntimeType.LITERT_LM) {
-          val isRunning = serverState.status == PhoneOpenAiServerStatus.RUNNING
-          val enableServerButton = isRunning || (serverReady && !isModelInitializing && !inProgress)
-          IconButton(
-            onClick = { onServerClicked(isRunning) },
-            enabled = enableServerButton,
-            modifier = Modifier.alpha(if (enableServerButton) 1f else 0.5f),
-          ) {
-            Icon(
-              imageVector = if (isRunning) Icons.Rounded.Stop else Icons.Rounded.PlayArrow,
-              contentDescription = if (isRunning) "Stop local server" else "Start local server",
-              tint = MaterialTheme.colorScheme.onSurface,
-              modifier = Modifier.size(20.dp),
-            )
-          }
-        }
         if (showConfigButton) {
           val enableConfigButton = !isModelInitializing && !inProgress && isModelInitialized
           IconButton(

@@ -18,8 +18,11 @@ package com.google.ai.edge.gallery.server
 
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import androidx.core.content.ContextCompat
 import com.google.ai.edge.gallery.data.Model
+import java.net.Inet4Address
+import java.net.NetworkInterface
 import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -38,10 +41,12 @@ data class PhoneOpenAiServerState(
   val status: PhoneOpenAiServerStatus = PhoneOpenAiServerStatus.STOPPED,
   val host: String = "",
   val port: Int = PHONE_SERVER_PORT,
+  val preferredBindAddress: String = "",
   val token: String = "",
   val modelName: String = "",
   val allowLanNoAuth: Boolean = false,
   val noAuthSubnetCidr: String = "192.168.192.0/24",
+  val autoStartOnAppLaunch: Boolean = false,
   val error: String? = null,
 )
 
@@ -76,6 +81,20 @@ object PhoneOpenAiServerStore {
 
   fun setAvailableModels(models: List<Model>) {
     availableModels = models.filter { it.isLlm }
+  }
+
+  fun setServerConfig(
+    preferredBindAddress: String,
+    port: Int,
+    autoStartOnAppLaunch: Boolean,
+  ) {
+    _state.update {
+      it.copy(
+        preferredBindAddress = preferredBindAddress,
+        port = port,
+        autoStartOnAppLaunch = autoStartOnAppLaunch,
+      )
+    }
   }
 
   fun setLanAuthBypass(enabled: Boolean, subnetCidr: String = "192.168.192.0/24") {
@@ -120,10 +139,7 @@ object PhoneOpenAiServerStore {
       it.copy(
         status = PhoneOpenAiServerStatus.STOPPED,
         host = "",
-        port = PHONE_SERVER_PORT,
         token = "",
-        allowLanNoAuth = false,
-        noAuthSubnetCidr = "192.168.192.0/24",
         error = null,
       )
     }
@@ -171,7 +187,10 @@ object PhoneOpenAiServerManager {
       PhoneOpenAiServerStore.setToken(serverToken)
     }
     val token = PhoneOpenAiServerStore.ensureToken()
-    PhoneOpenAiServerStore.beginStarting(token = token)
+    PhoneOpenAiServerStore.beginStarting(
+      token = token,
+      port = PhoneOpenAiServerStore.state.value.port,
+    )
 
     val intent = Intent(context, PhoneOpenAiServerService::class.java).apply {
       action = ACTION_START
@@ -186,4 +205,49 @@ object PhoneOpenAiServerManager {
     }
     ContextCompat.startForegroundService(context, intent)
   }
+}
+
+internal fun listBindableLanAddresses(): List<String> {
+  return collectBindableLanAddresses().mapNotNull { it.hostAddress }.distinct()
+}
+
+internal fun resolveBindAddress(preferredBindAddress: String? = null): Inet4Address? {
+  val candidates = collectBindableLanAddresses()
+  val preferred = preferredBindAddress?.trim().orEmpty()
+  if (preferred.isNotEmpty()) {
+    candidates.firstOrNull { it.hostAddress == preferred }?.let {
+      Log.i("AGPhoneOpenAiServer", "Selected preferred bind address ${it.hostAddress}")
+      return it
+    }
+  }
+  candidates.firstOrNull { it.hostAddress?.startsWith("192.168.192.") == true }?.let {
+    Log.i("AGPhoneOpenAiServer", "Selected preferred bind address ${it.hostAddress}")
+    return it
+  }
+  candidates.firstOrNull()?.also {
+    Log.i("AGPhoneOpenAiServer", "Selected fallback bind address ${it.hostAddress}")
+  }
+  return candidates.firstOrNull()
+}
+
+private fun collectBindableLanAddresses(): List<Inet4Address> {
+  val interfaces = NetworkInterface.getNetworkInterfaces() ?: return emptyList()
+  val candidates = mutableListOf<Inet4Address>()
+  for (networkInterface in interfaces) {
+    if (!networkInterface.isUp || networkInterface.isLoopback || networkInterface.isVirtual) {
+      continue
+    }
+    val addresses = networkInterface.inetAddresses
+    for (address in addresses) {
+      if (
+        address is Inet4Address &&
+          !address.isLoopbackAddress &&
+          !address.isLinkLocalAddress &&
+          address.isSiteLocalAddress
+      ) {
+        candidates.add(address)
+      }
+    }
+  }
+  return candidates
 }

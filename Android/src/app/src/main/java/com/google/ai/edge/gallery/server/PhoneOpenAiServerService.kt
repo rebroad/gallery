@@ -48,8 +48,6 @@ import com.google.ai.edge.litertlm.OpenAiChatMessage
 import com.google.ai.edge.litertlm.OpenAiHttpServer
 import com.google.ai.edge.litertlm.OpenAiModelInfo
 import com.google.ai.edge.litertlm.SamplerConfig
-import java.net.Inet4Address
-import java.net.NetworkInterface
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -110,7 +108,7 @@ class PhoneOpenAiServerService : Service() {
       return
     }
 
-    val bindAddress = findBindAddress()
+    val bindAddress = resolveBindAddress(PhoneOpenAiServerStore.state.value.preferredBindAddress)
     if (bindAddress == null) {
       PhoneOpenAiServerStore.setError("No LAN address found. Connect to Wi-Fi and try again.")
       stopSelf()
@@ -119,7 +117,7 @@ class PhoneOpenAiServerService : Service() {
 
     notificationToken = PhoneOpenAiServerStore.ensureToken()
     notificationHost = bindAddress.hostAddress ?: ""
-    notificationPort = PHONE_SERVER_PORT
+    notificationPort = PhoneOpenAiServerStore.state.value.port
     PhoneOpenAiServerStore.setRunning(
       host = notificationHost,
       port = notificationPort,
@@ -146,7 +144,7 @@ class PhoneOpenAiServerService : Service() {
       )
 
     try {
-      server?.start(bindAddress = bindAddress, port = PHONE_SERVER_PORT)
+      server?.start(bindAddress = bindAddress, port = notificationPort)
     } catch (e: Exception) {
       Log.e(TAG, "Failed to bind server socket", e)
       PhoneOpenAiServerStore.setError(e.message ?: "Failed to bind server socket")
@@ -284,27 +282,6 @@ class PhoneOpenAiServerService : Service() {
         ),
       )
       .build()
-
-  private fun findBindAddress(): Inet4Address? {
-    val interfaces = NetworkInterface.getNetworkInterfaces() ?: return null
-    for (networkInterface in interfaces) {
-      if (!networkInterface.isUp || networkInterface.isLoopback || networkInterface.isVirtual) {
-        continue
-      }
-      val addresses = networkInterface.inetAddresses
-      for (address in addresses) {
-        if (
-          address is Inet4Address &&
-            !address.isLoopbackAddress &&
-            !address.isLinkLocalAddress &&
-            address.isSiteLocalAddress
-        ) {
-          return address
-        }
-      }
-    }
-    return null
-  }
 
   private fun resolveModelToServe(): Model? {
     PhoneOpenAiServerStore.currentModel?.let { return it }
