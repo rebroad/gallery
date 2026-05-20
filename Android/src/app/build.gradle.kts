@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import java.io.ByteArrayOutputStream
+
 plugins {
   alias(libs.plugins.android.application)
   // Note: set apply to true to enable google-services (requires google-services.json).
@@ -28,6 +30,26 @@ plugins {
   kotlin("kapt")
 }
 
+fun Project.gitOutput(vararg args: String): String? {
+  val stdout = ByteArrayOutputStream()
+  return runCatching {
+    exec {
+      commandLine("git", *args)
+      standardOutput = stdout
+      errorOutput = stdout
+      isIgnoreExitValue = true
+    }
+    stdout.toString().trim().takeIf { it.isNotEmpty() }
+  }.getOrNull()
+}
+
+fun Project.gitVersionName(baseVersion: String): String {
+  val shortHash = gitOutput("rev-parse", "--short=12", "HEAD") ?: "nogit"
+  val dirtySuffix =
+    if ((gitOutput("status", "--porcelain", "--untracked-files=all") ?: "").isNotBlank()) "+" else ""
+  return "$baseVersion-$shortHash$dirtySuffix"
+}
+
 android {
   namespace = "com.google.ai.edge.gallery"
   compileSdk = 35
@@ -37,7 +59,7 @@ android {
     minSdk = 31
     targetSdk = 35
     versionCode = 32
-    versionName = "1.0.14-exp-phone-http"
+    versionName = gitVersionName("1.0.14")
 
     // Needed for HuggingFace auth workflows.
     // Use the scheme of the "Redirect URLs" in HuggingFace app.
