@@ -55,7 +55,6 @@ import com.google.ai.edge.gallery.R
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.data.RuntimeType
 import com.google.ai.edge.gallery.data.Task
-import com.google.ai.edge.gallery.server.PhoneOpenAiServerStore
 import com.google.ai.edge.gallery.ui.common.modelitem.ModelItem
 import com.google.ai.edge.gallery.ui.common.modelitem.StatusIcon
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
@@ -68,14 +67,20 @@ fun ModelPicker(
   onModelSelected: (Model) -> Unit,
 ) {
   val modelManagerUiState by modelManagerViewModel.uiState.collectAsState()
-  val serverState by PhoneOpenAiServerStore.state.collectAsState()
   var showMemoryWarning by remember { mutableStateOf(false) }
   var modelToPick by remember { mutableStateOf<Model?>(null) }
   val context = LocalContext.current
-  val runningModel = task.models.firstOrNull { it.name == serverState.modelName && it.instance != null }
-  val recommendedModels = remember(task.models, runningModel?.name) {
-    task.models.filter { it.name != runningModel?.name }
-  }
+  val cachedModels = task.models.filter { it.instance != null }
+  val cachedModelNames = cachedModels.mapTo(mutableSetOf()) { it.name }
+  val currentCachedModel = cachedModels.firstOrNull { it.name == modelManagerUiState.selectedModel.name }
+  val orderedCachedModels =
+    buildList {
+      if (currentCachedModel != null) {
+        add(currentCachedModel)
+      }
+      addAll(cachedModels.filter { it.name != currentCachedModel?.name })
+    }
+  val recommendedModels = task.models.filter { it.name !in cachedModelNames }
 
   Column(modifier = Modifier.padding(bottom = 8.dp)) {
     // Title
@@ -98,33 +103,28 @@ fun ModelPicker(
       )
     }
 
-    // Currently running model.
-    if (runningModel != null) {
+    // Cached models.
+    if (orderedCachedModels.isNotEmpty()) {
       Text(
-        stringResource(R.string.model_list_running_model_title),
+        stringResource(R.string.model_list_cached_models_title),
         modifier = Modifier.padding(horizontal = 16.dp).padding(top = 8.dp, bottom = 4.dp),
         style = MaterialTheme.typography.labelLarge,
         color = MaterialTheme.colorScheme.onSurface,
       )
-
-      ModelItem(
-        model = runningModel,
-        task = task,
-        modelManagerViewModel = modelManagerViewModel,
-        onModelClicked = onModelSelected,
-        onBenchmarkClicked = { _: Model -> },
-        modifier = Modifier.padding(horizontal = 16.dp),
-        expanded = true,
-        showDeleteButton = false,
-        canExpand = false,
-      )
-
-      Text(
-        stringResource(R.string.model_list_running_model_subtitle),
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-      )
+      for ((index, model) in orderedCachedModels.withIndex()) {
+        ModelItem(
+          model = model,
+          task = task,
+          modelManagerViewModel = modelManagerViewModel,
+          onModelClicked = onModelSelected,
+          onBenchmarkClicked = { _: Model -> },
+          modifier =
+            Modifier.padding(horizontal = 16.dp).padding(top = if (index == 0) 0.dp else 8.dp),
+          expanded = index == 0,
+          showDeleteButton = false,
+          canExpand = false,
+        )
+      }
     }
 
     // Recommended models.
