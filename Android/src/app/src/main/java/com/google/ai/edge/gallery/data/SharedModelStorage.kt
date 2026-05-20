@@ -16,6 +16,7 @@
 
 package com.google.ai.edge.gallery.data
 
+import android.os.Environment
 import java.io.File
 
 /**
@@ -29,6 +30,25 @@ object SharedModelStorage {
     "/storage/emulated/0/Android/media/GoogleAIEdgeGallery/models"
 
   fun sharedRootDir(): File = File(SHARED_MODEL_ROOT_PATH)
+
+  fun isSharedModelPath(path: String): Boolean {
+    val normalizedPath = path.trimEnd(File.separatorChar)
+    val rootPath = sharedRootDir().absolutePath.trimEnd(File.separatorChar)
+    return normalizedPath == rootPath || normalizedPath.startsWith("$rootPath${File.separator}")
+  }
+
+  fun hasSharedStorageAccess(): Boolean = Environment.isExternalStorageManager()
+
+  fun ensureWorldReadable(file: File) {
+    if (!file.exists()) {
+      return
+    }
+    file.setReadable(true, false)
+    if (file.isDirectory) {
+      file.setExecutable(true, false)
+      file.listFiles()?.forEach { child -> ensureWorldReadable(child) }
+    }
+  }
 
   fun modelRootDir(modelDir: String): File = File(sharedRootDir(), modelDir)
 

@@ -23,17 +23,21 @@ import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Environment
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.getSystemService
 import com.google.ai.edge.gallery.R
+import com.google.ai.edge.gallery.data.BuiltInTaskId
 import com.google.ai.edge.gallery.data.ConfigKeys
 import com.google.ai.edge.gallery.data.DEFAULT_TEMPERATURE
 import com.google.ai.edge.gallery.data.DEFAULT_TOPK
 import com.google.ai.edge.gallery.data.DEFAULT_TOPP
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.data.RuntimeType
+import com.google.ai.edge.gallery.data.SharedModelStorage
+import com.google.ai.edge.gallery.runtime.runtimeHelper
 import com.google.ai.edge.gallery.ui.llmchat.LlmModelInstance
 import com.google.ai.edge.litertlm.Conversation
 import com.google.ai.edge.litertlm.ConversationConfig
@@ -46,6 +50,7 @@ import com.google.ai.edge.litertlm.OpenAiModelInfo
 import com.google.ai.edge.litertlm.SamplerConfig
 import java.net.Inet4Address
 import java.net.NetworkInterface
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -93,7 +98,7 @@ class PhoneOpenAiServerService : Service() {
 
   private suspend fun startServer() {
     val model = resolveModelToServe()
-    val instance = model?.instance as? LlmModelInstance
+    val instance = model?.let { ensureModelInitialized(it) }
     if (model == null || instance == null) {
       PhoneOpenAiServerStore.setError("Initialize the selected model before starting the server.")
       stopSelf()
@@ -122,8 +127,6 @@ class PhoneOpenAiServerService : Service() {
       modelName = model.name,
     )
 
-    val currentModel = model
-    val currentInstance = instance
     server =
       OpenAiHttpServer(
         availableModelsProvider = {
@@ -133,7 +136,7 @@ class PhoneOpenAiServerService : Service() {
             .map { OpenAiModelInfo(id = it.name, owned_by = "gallery") }
         },
         currentModelNameProvider = { PhoneOpenAiServerStore.currentModel?.name ?: model.name },
-        chatConversationFactory = { request -> buildConversation(currentInstance, currentModel, request) },
+        chatConversationFactory = { request -> buildConversation(request) },
         authTokenProvider = { PhoneOpenAiServerStore.state.value.token },
         lanAuthBypassProvider = { hostAddress ->
           PhoneOpenAiServerStore.allowLanNoAuth &&
@@ -180,12 +183,18 @@ class PhoneOpenAiServerService : Service() {
   }
 
   private fun buildConversation(
-    instance: LlmModelInstance,
-    model: Model,
     request: OpenAiChatRequest,
   ): Conversation? {
-    val activeModel = resolveModelForRequest(request.model) ?: model
-    val activeInstance = activeModel.instance as? LlmModelInstance ?: instance
+    val activeModel =
+      if (request.model.isNullOrBlank()) {
+        resolveModelToServe()
+      } else {
+        resolveModelForRequest(request.model)
+      }
+    val activeInstance = activeModel?.instance as? LlmModelInstance
+    if (activeModel == null || activeInstance == null) {
+      return null
+    }
 
     val promptIndex = request.messages.indexOfLast { it.role.lowercase() != "system" }
     val historyMessages =
@@ -329,8 +338,52 @@ class PhoneOpenAiServerService : Service() {
           return current
         }
       }
+      return null
     }
     return resolveModelToServe()
+  }
+
+  private suspend fun ensureModelInitialized(model: Model): LlmModelInstance? {
+    val instance = model.instance as? LlmModelInstance
+    if (instance != null) {
+      return instance
+    }
+    if (model.runtimeType != RuntimeType.LITERT_LM) {
+      return null
+    }
+    val modelPath = model.getPath(this)
+    if (SharedModelStorage.isSharedModelPath(modelPath) && !Environment.isExternalStorageManager()) {
+      Log.e(
+        TAG,
+        "Missing all-files access for shared model path $modelPath. Grant MANAGE_EXTERNAL_STORAGE and retry.",
+      )
+      return null
+    }
+
+    val done = CompletableDeferred<String>()
+    try {
+      model.runtimeHelper.initialize(
+        context = this,
+        model = model,
+        taskId = BuiltInTaskId.LLM_CHAT,
+        supportImage = model.llmSupportImage,
+        supportAudio = model.llmSupportAudio,
+        onDone = { done.complete(it) },
+        systemInstruction = null,
+        tools = emptyList(),
+        enableConversationConstrainedDecoding = false,
+        coroutineScope = scope,
+      )
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to start model initialization for '${model.name}'", e)
+      return null
+    }
+    val error = done.await()
+    if (error.isNotEmpty()) {
+      Log.e(TAG, "Failed to initialize model '${model.name}': $error")
+      return null
+    }
+    return model.instance as? LlmModelInstance
   }
 
   private fun isInLanBypassSubnet(hostAddress: String?, subnetCidr: String): Boolean {

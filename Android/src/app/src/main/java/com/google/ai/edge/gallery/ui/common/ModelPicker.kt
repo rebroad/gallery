@@ -55,6 +55,8 @@ import com.google.ai.edge.gallery.R
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.data.RuntimeType
 import com.google.ai.edge.gallery.data.Task
+import com.google.ai.edge.gallery.server.PhoneOpenAiServerStore
+import com.google.ai.edge.gallery.ui.common.modelitem.ModelItem
 import com.google.ai.edge.gallery.ui.common.modelitem.StatusIcon
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
 import com.google.ai.edge.gallery.ui.theme.labelSmallNarrow
@@ -66,9 +68,14 @@ fun ModelPicker(
   onModelSelected: (Model) -> Unit,
 ) {
   val modelManagerUiState by modelManagerViewModel.uiState.collectAsState()
+  val serverState by PhoneOpenAiServerStore.state.collectAsState()
   var showMemoryWarning by remember { mutableStateOf(false) }
   var modelToPick by remember { mutableStateOf<Model?>(null) }
   val context = LocalContext.current
+  val runningModel = task.models.firstOrNull { it.name == serverState.modelName && it.instance != null }
+  val recommendedModels = remember(task.models, runningModel?.name) {
+    task.models.filter { it.name != runningModel?.name }
+  }
 
   Column(modifier = Modifier.padding(bottom = 8.dp)) {
     // Title
@@ -91,8 +98,46 @@ fun ModelPicker(
       )
     }
 
-    // Model list.
-    for (model in task.models) {
+    // Currently running model.
+    if (runningModel != null) {
+      Text(
+        stringResource(R.string.model_list_running_model_title),
+        modifier = Modifier.padding(horizontal = 16.dp).padding(top = 8.dp, bottom = 4.dp),
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurface,
+      )
+
+      ModelItem(
+        model = runningModel,
+        task = task,
+        modelManagerViewModel = modelManagerViewModel,
+        onModelClicked = onModelSelected,
+        onBenchmarkClicked = { _: Model -> },
+        modifier = Modifier.padding(horizontal = 16.dp),
+        expanded = true,
+        showDeleteButton = false,
+        canExpand = false,
+      )
+
+      Text(
+        stringResource(R.string.model_list_running_model_subtitle),
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+    }
+
+    // Recommended models.
+    if (recommendedModels.isNotEmpty()) {
+      Text(
+        stringResource(R.string.model_list_recommended_models_title),
+        modifier = Modifier.padding(horizontal = 16.dp).padding(top = 16.dp, bottom = 4.dp),
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurface,
+      )
+    }
+
+    for (model in recommendedModels) {
       val selected = model.name == modelManagerUiState.selectedModel.name
       Row(
         verticalAlignment = Alignment.CenterVertically,

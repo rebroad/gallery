@@ -71,8 +71,6 @@ android {
 }
 
 dependencies {
-  val localLitertlmJar =
-      file("../../../../LiteRT-LM.build/bazel-bin/kotlin/java/com/google/ai/edge/litertlm/litertlm-jvm.jar")
   implementation(libs.androidx.core.ktx)
   implementation(libs.androidx.lifecycle.runtime.ktx)
   implementation(libs.androidx.activity.compose)
@@ -91,11 +89,7 @@ dependencies {
   implementation(libs.androidx.lifecycle.process)
   implementation(libs.androidx.security.crypto)
   implementation(libs.androidx.webkit)
-  if (localLitertlmJar.exists()) {
-    implementation(files(localLitertlmJar))
-  } else {
-    implementation(libs.litertlm)
-  }
+  implementation(libs.litertlm)
   implementation(libs.commonmark)
   implementation(libs.richtext)
   implementation(libs.tflite)

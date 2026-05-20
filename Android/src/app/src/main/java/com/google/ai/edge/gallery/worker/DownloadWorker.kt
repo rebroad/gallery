@@ -251,6 +251,7 @@ class DownloadWorker(context: Context, params: WorkerParameters) :
               originalFile.delete()
             }
             outputTmpFile.renameTo(originalFile)
+            SharedModelStorage.ensureWorldReadable(outputDir)
             Log.d(TAG, "Download done")
 
             // Unzip if the downloaded file is a zip.
@@ -297,6 +298,7 @@ class DownloadWorker(context: Context, params: WorkerParameters) :
               // Delete the original file.
               val zipFile = File(zipFilePath)
               zipFile.delete()
+              SharedModelStorage.ensureWorldReadable(destDir)
             }
           }
           Result.success()

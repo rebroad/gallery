@@ -20,7 +20,6 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.content.ContextCompat
 import com.google.ai.edge.gallery.data.Model
-import com.google.ai.edge.gallery.ui.llmchat.LlmModelInstance
 import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -66,7 +65,13 @@ object PhoneOpenAiServerStore {
     currentModel = model
     if (model != null) {
       _state.update { it.copy(modelName = model.name, error = null) }
+    } else {
+      _state.update { it.copy(modelName = "", error = null) }
     }
+  }
+
+  fun isHostingModel(model: Model): Boolean {
+    return state.value.status != PhoneOpenAiServerStatus.STOPPED && currentModel?.name == model.name
   }
 
   fun setAvailableModels(models: List<Model>) {
@@ -157,12 +162,6 @@ object PhoneOpenAiServerManager {
     val curStatus = PhoneOpenAiServerStore.state.value.status
     if (curStatus == PhoneOpenAiServerStatus.STARTING || curStatus == PhoneOpenAiServerStatus.RUNNING) {
       return null
-    }
-    val instance = model.instance as? LlmModelInstance
-    if (instance == null) {
-      val message = "Model '${model.name}' is not initialized."
-      PhoneOpenAiServerStore.setError(message)
-      return message
     }
 
     PhoneOpenAiServerStore.setCurrentModel(model)

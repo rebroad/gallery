@@ -81,6 +81,7 @@ import net.openid.appauth.AuthorizationService
 import net.openid.appauth.ResponseTypeValues
 
 private const val TAG = "AGModelManagerViewModel"
+private const val ACTIVE_MODEL_SECRET_KEY = "active_litertlm_model_name"
 private const val TEXT_INPUT_HISTORY_MAX_SIZE = 50
 private const val MODEL_ALLOWLIST_FILENAME = "model_allowlist.json"
 private const val MODEL_ALLOWLIST_TEST_FILENAME = "model_allowlist_test.json"
@@ -213,6 +214,24 @@ constructor(
   val authService = AuthorizationService(context)
   var curAccessToken: String = ""
 
+  init {
+    viewModelScope.launch(Dispatchers.Default) {
+      PhoneOpenAiServerStore.state.collect { serverState ->
+        val modelName = serverState.modelName
+        if (modelName.isBlank()) {
+          return@collect
+        }
+        val currentSelected = uiState.value.selectedModel
+        if (currentSelected.name == modelName) {
+          return@collect
+        }
+        val model = getModelByName(modelName) ?: return@collect
+        _uiState.update { it.copy(selectedModel = model) }
+        dataStoreRepository.saveSecret(ACTIVE_MODEL_SECRET_KEY, model.name)
+      }
+    }
+  }
+
   override fun onCleared() {
     authService.dispose()
   }
@@ -288,6 +307,7 @@ constructor(
     if (_uiState.value.selectedModel.name != model.name) {
       _uiState.update { it.copy(selectedModel = model) }
       PhoneOpenAiServerStore.setCurrentModel(model)
+      dataStoreRepository.saveSecret(ACTIVE_MODEL_SECRET_KEY, model.name)
     }
   }
 
@@ -1024,6 +1044,7 @@ constructor(
               tasksByCategory = groupTasksByCategory(),
             )
         }
+        PhoneOpenAiServerStore.setCurrentModel(_uiState.value.selectedModel)
         PhoneOpenAiServerStore.setAvailableModels(getAllDownloadedModels())
 
         // Process pending downloads.
@@ -1178,11 +1199,17 @@ constructor(
     Log.d(TAG, "text input history: $textInputHistory")
 
     Log.d(TAG, "model download status: $modelDownloadStatus")
+    val selectedModel =
+      dataStoreRepository.readSecret(ACTIVE_MODEL_SECRET_KEY)?.let { savedModelName ->
+        tasks.values.asSequence().flatMap { it.models.asSequence() }.firstOrNull { it.name == savedModelName }
+      } ?: tasks.values.asSequence().flatMap { it.models.asSequence() }.firstOrNull() ?: EMPTY_MODEL
+
     return ModelManagerUiState(
       tasks = getActiveCustomTasks().map { it.task }.toList(),
       tasksByCategory = mapOf(),
       modelDownloadStatus = modelDownloadStatus,
       modelInitializationStatus = modelInstances,
+      selectedModel = selectedModel,
       textInputHistory = textInputHistory,
     )
   }
@@ -1557,6 +1584,7 @@ constructor(
             "Migrating downloaded model '${model.name}' from ${versionDir.absolutePath} to ${targetVersionDir.absolutePath}",
           )
           if (copyRecursively(versionDir, targetVersionDir)) {
+            SharedModelStorage.ensureWorldReadable(targetVersionDir)
             if (baseDir == context.getExternalFilesDir(null)) {
               deleteRecursively(versionDir)
             }

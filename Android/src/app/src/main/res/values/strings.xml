@@ -192,6 +192,9 @@
   <string name="tos_dialog_accept_and_continue_button_label" translatable="false">Accept &amp; continue</string>
   <string name="tos_dialog_agree_and_continue_button_label" translatable="false">Agree &amp; continue</string>
   <string name="try_it" translatable="false">Try it</string>
+  <string name="enter_model" translatable="false">Enter</string>
+  <string name="model_list_running_model_title" translatable="false">Currently running</string>
+  <string name="model_list_running_model_subtitle" translatable="false">Already spun up and ready to use</string>
   <string name="turn_on_all" translatable="false">Turn on all</string>
   <string name="turn_off_all" translatable="false">Turn off all</string>
   <string name="undo" translatable="false">Undo</string>

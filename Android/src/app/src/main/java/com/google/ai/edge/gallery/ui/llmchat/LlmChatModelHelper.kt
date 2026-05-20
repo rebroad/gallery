@@ -18,6 +18,7 @@ package com.google.ai.edge.gallery.ui.llmchat
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Environment
 import android.util.Log
 import com.google.ai.edge.gallery.common.cleanUpMediapipeTaskErrorMessage
 import com.google.ai.edge.gallery.data.Accelerator
@@ -29,6 +30,7 @@ import com.google.ai.edge.gallery.data.DEFAULT_TOPP
 import com.google.ai.edge.gallery.data.DEFAULT_VISION_ACCELERATOR
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.data.ModelCapability
+import com.google.ai.edge.gallery.data.SharedModelStorage
 import com.google.ai.edge.gallery.runtime.CleanUpListener
 import com.google.ai.edge.gallery.runtime.LlmModelHelper
 import com.google.ai.edge.gallery.runtime.ResultListener
@@ -109,6 +111,14 @@ object LlmChatModelHelper : LlmModelHelper {
     Log.d(TAG, "Preferred backend: $preferredBackend")
 
     val modelPath = model.getPath(context = context)
+    if (SharedModelStorage.isSharedModelPath(modelPath) && !Environment.isExternalStorageManager()) {
+      onDone(
+        cleanUpMediapipeTaskErrorMessage(
+          "Shared model storage needs Android's 'All files access' permission. Grant it in system settings and try again."
+        )
+      )
+      return
+    }
     val engineConfig =
       EngineConfig(
         modelPath = modelPath,

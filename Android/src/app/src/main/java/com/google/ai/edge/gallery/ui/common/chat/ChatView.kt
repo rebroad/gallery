@@ -333,7 +333,9 @@ fun ChatView(
               modelPreparing = uiState.preparing,
               shouldShowHistoryButton = true,
               showServerButton = true,
-              serverReady = selectedModel.instance != null,
+              serverReady =
+                modelManagerUiState.modelDownloadStatus[selectedModel.name]?.status ==
+                  ModelDownloadStatusType.SUCCEEDED,
               onConfigChanged = { old, new ->
                 // Filter out config values that are not relevant to the task.
                 //
