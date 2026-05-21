@@ -18,6 +18,7 @@ package com.google.ai.edge.gallery.ui.server
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -26,7 +27,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -34,7 +34,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Scaffold
@@ -115,16 +114,16 @@ fun PhoneOpenAiServerScreen(
         Modifier.fillMaxSize()
           .background(MaterialTheme.colorScheme.surfaceContainer)
           .padding(innerPadding)
-          .padding(16.dp),
-      verticalArrangement = Arrangement.spacedBy(16.dp),
+          .padding(12.dp),
+      verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
       Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         modifier = Modifier.fillMaxWidth(),
       ) {
         Column(
-          modifier = Modifier.fillMaxWidth().padding(20.dp),
-          verticalArrangement = Arrangement.spacedBy(12.dp),
+          modifier = Modifier.fillMaxWidth().padding(12.dp),
+          verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
           Text(
             text = stringResource(R.string.phone_server_status_label),
@@ -163,8 +162,8 @@ fun PhoneOpenAiServerScreen(
         modifier = Modifier.fillMaxWidth(),
       ) {
         Column(
-          modifier = Modifier.fillMaxWidth().padding(20.dp),
-          verticalArrangement = Arrangement.spacedBy(10.dp),
+          modifier = Modifier.fillMaxWidth().padding(12.dp),
+          verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
           Text(
             text = stringResource(R.string.phone_server_active_model_label),
@@ -176,7 +175,6 @@ fun PhoneOpenAiServerScreen(
             style = MaterialTheme.typography.titleLarge,
             color = MaterialTheme.colorScheme.onSurface,
           )
-          Spacer(modifier = Modifier.height(4.dp))
           Button(
             onClick = {
               if (isRunning) {
@@ -209,43 +207,45 @@ fun PhoneOpenAiServerScreen(
         modifier = Modifier.fillMaxWidth(),
       ) {
         Column(
-          modifier = Modifier.fillMaxWidth().padding(20.dp),
-          verticalArrangement = Arrangement.spacedBy(12.dp),
+          modifier = Modifier.fillMaxWidth().padding(12.dp),
+          verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
           Text(
             text = stringResource(R.string.phone_server_bind_address_label),
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
           )
-          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(
-              onClick = {
-                refreshBindAddresses()
-                bindMenuExpanded = true
-              },
-              modifier = Modifier.fillMaxWidth(),
-            ) {
-              Text(text = selectedBindAddressLabel)
-            }
-            DropdownMenu(
-              expanded = bindMenuExpanded,
-              onDismissRequest = { bindMenuExpanded = false },
-            ) {
-              DropdownMenuItem(
-                text = { Text(stringResource(R.string.phone_server_bind_address_auto)) },
+          Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Box(modifier = Modifier.fillMaxWidth()) {
+              Button(
                 onClick = {
-                  bindMenuExpanded = false
-                  modelManagerViewModel.setPhoneServerBindAddress("")
+                  refreshBindAddresses()
+                  bindMenuExpanded = true
                 },
-              )
-              availableBindAddresses.forEach { address ->
+                modifier = Modifier.fillMaxWidth(),
+              ) {
+                Text(text = selectedBindAddressLabel)
+              }
+              DropdownMenu(
+                expanded = bindMenuExpanded,
+                onDismissRequest = { bindMenuExpanded = false },
+              ) {
                 DropdownMenuItem(
-                  text = { Text(address) },
+                  text = { Text(stringResource(R.string.phone_server_bind_address_auto)) },
                   onClick = {
                     bindMenuExpanded = false
-                    modelManagerViewModel.setPhoneServerBindAddress(address)
+                    modelManagerViewModel.setPhoneServerBindAddress("")
                   },
                 )
+                availableBindAddresses.forEach { address ->
+                  DropdownMenuItem(
+                    text = { Text(address) },
+                    onClick = {
+                      bindMenuExpanded = false
+                      modelManagerViewModel.setPhoneServerBindAddress(address)
+                    },
+                  )
+                }
               }
             }
             Text(
@@ -266,34 +266,34 @@ fun PhoneOpenAiServerScreen(
             label = { Text(stringResource(R.string.phone_server_port_label)) },
             singleLine = true,
             textStyle = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.widthIn(max = 160.dp),
+            modifier = Modifier.width(136.dp),
           )
 
-          ListItem(
-            headlineContent = {
+          Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Column(modifier = Modifier.weight(1f)) {
               Text(
                 text = stringResource(R.string.phone_server_auto_start_label),
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
               )
-            },
-            supportingContent = {
+              Spacer(modifier = Modifier.height(2.dp))
               Text(
                 text = stringResource(R.string.phone_server_auto_start_hint),
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
               )
-            },
-            trailingContent = {
-              Switch(
-                checked = serverState.autoStartOnAppLaunch,
-                onCheckedChange = {
-                  checked -> modelManagerViewModel.setPhoneServerAutoStart(checked)
-                },
-              )
-            },
-            modifier = Modifier.fillMaxWidth(),
-          )
+            }
+            Switch(
+              checked = serverState.autoStartOnAppLaunch,
+              onCheckedChange = { checked ->
+                modelManagerViewModel.setPhoneServerAutoStart(checked)
+              },
+            )
+          }
         }
       }
 
@@ -303,8 +303,8 @@ fun PhoneOpenAiServerScreen(
           modifier = Modifier.fillMaxWidth(),
         ) {
           Column(
-            modifier = Modifier.fillMaxWidth().padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
           ) {
             Text(
               text = stringResource(R.string.error),
@@ -325,8 +325,8 @@ fun PhoneOpenAiServerScreen(
         modifier = Modifier.fillMaxWidth(),
       ) {
         Column(
-          modifier = Modifier.fillMaxWidth().padding(20.dp),
-          verticalArrangement = Arrangement.spacedBy(8.dp),
+          modifier = Modifier.fillMaxWidth().padding(12.dp),
+          verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
           Text(
             text = stringResource(R.string.phone_server_endpoint_label),
