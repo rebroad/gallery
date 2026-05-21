@@ -39,15 +39,14 @@ import com.google.ai.edge.gallery.data.RuntimeType
 import com.google.ai.edge.gallery.data.SharedModelStorage
 import com.google.ai.edge.gallery.runtime.runtimeHelper
 import com.google.ai.edge.gallery.ui.llmchat.LlmModelInstance
-import com.google.ai.edge.litertlm.Conversation
-import com.google.ai.edge.litertlm.ConversationConfig
-import com.google.ai.edge.litertlm.Contents
-import com.google.ai.edge.litertlm.Message
-import com.google.ai.edge.litertlm.OpenAiChatRequest
 import com.google.ai.edge.litertlm.OpenAiChatMessage
+import com.google.ai.edge.litertlm.OpenAiChatRequest
 import com.google.ai.edge.litertlm.OpenAiHttpServer
 import com.google.ai.edge.litertlm.OpenAiModelInfo
+import com.google.ai.edge.litertlm.OpenAiResponsesRequest
 import com.google.ai.edge.litertlm.SamplerConfig
+import com.google.ai.edge.litertlm.Session
+import com.google.ai.edge.litertlm.SessionConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -132,9 +131,8 @@ class PhoneOpenAiServerService : Service() {
             .map { OpenAiModelInfo(id = it.name, owned_by = "gallery") }
         },
         currentModelNameProvider = { PhoneOpenAiServerStore.currentModel?.name ?: model.name },
-        chatConversationFactory = { _ -> null },
-        sharedChatConversationFactory = { request -> resolveSharedConversation(request.model) },
-        sharedResponsesConversationFactory = { request -> resolveSharedConversation(request.model) },
+        chatSessionFactory = { request -> createHttpSession(request.model, request) },
+        responsesSessionFactory = { request -> createHttpSession(request.model, request) },
         authTokenProvider = { null },
         lanAuthBypassProvider = { hostAddress ->
           PhoneOpenAiServerStore.allowLanNoAuth &&
@@ -180,7 +178,7 @@ class PhoneOpenAiServerService : Service() {
     stopSelf()
   }
 
-  private fun resolveSharedConversation(requestModelName: String?): Conversation? {
+  private fun createHttpSession(requestModelName: String?, request: OpenAiChatRequest): Session? {
     val activeModel =
       if (requestModelName.isNullOrBlank()) {
         resolveModelToServe()
@@ -191,7 +189,34 @@ class PhoneOpenAiServerService : Service() {
     if (activeModel == null || activeInstance == null) {
       return null
     }
-    return activeInstance.conversation
+    return try {
+      activeInstance.engine.createSession(request.toSessionConfig(activeModel))
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to create HTTP session for '${activeModel.name}'", e)
+      null
+    }
+  }
+
+  private fun createHttpSession(
+    requestModelName: String?,
+    request: OpenAiResponsesRequest,
+  ): Session? {
+    val activeModel =
+      if (requestModelName.isNullOrBlank()) {
+        resolveModelToServe()
+      } else {
+        resolveModelForRequest(requestModelName)
+      }
+    val activeInstance = activeModel?.instance as? LlmModelInstance
+    if (activeModel == null || activeInstance == null) {
+      return null
+    }
+    return try {
+      activeInstance.engine.createSession(request.toSessionConfig(activeModel))
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to create HTTP session for '${activeModel.name}'", e)
+      null
+    }
   }
 
   private fun createNotificationChannel() {
@@ -307,6 +332,40 @@ class PhoneOpenAiServerService : Service() {
       return null
     }
     return model.instance as? LlmModelInstance
+  }
+
+  private fun OpenAiChatRequest.toSessionConfig(model: Model): SessionConfig {
+    val topK =
+      top_k ?: model.getIntConfigValue(key = ConfigKeys.TOPK, defaultValue = DEFAULT_TOPK)
+    val topP =
+      top_p ?: model.getFloatConfigValue(key = ConfigKeys.TOPP, defaultValue = DEFAULT_TOPP)
+    val temperature =
+      temperature
+        ?: model.getFloatConfigValue(key = ConfigKeys.TEMPERATURE, defaultValue = DEFAULT_TEMPERATURE)
+    return SessionConfig(
+      SamplerConfig(
+        topK = topK,
+        topP = topP.toDouble(),
+        temperature = temperature.toDouble(),
+      )
+    )
+  }
+
+  private fun OpenAiResponsesRequest.toSessionConfig(model: Model): SessionConfig {
+    val topK =
+      top_k ?: model.getIntConfigValue(key = ConfigKeys.TOPK, defaultValue = DEFAULT_TOPK)
+    val topP =
+      top_p ?: model.getFloatConfigValue(key = ConfigKeys.TOPP, defaultValue = DEFAULT_TOPP)
+    val temperature =
+      temperature
+        ?: model.getFloatConfigValue(key = ConfigKeys.TEMPERATURE, defaultValue = DEFAULT_TEMPERATURE)
+    return SessionConfig(
+      SamplerConfig(
+        topK = topK,
+        topP = topP.toDouble(),
+        temperature = temperature.toDouble(),
+      )
+    )
   }
 
   private fun isInLanBypassSubnet(hostAddress: String?, subnetCidr: String): Boolean {

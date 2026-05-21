@@ -32,8 +32,7 @@ import java.net.Socket
 import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.CancellationException
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicReference
+import java.util.LinkedHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -137,41 +136,31 @@ private data class HttpRequest(
   val body: ByteArray,
 )
 
+private data class HttpSessionState(
+  val modelName: String,
+  val session: Session,
+  val mutex: Mutex = Mutex(),
+)
+
+private const val MAX_HTTP_SESSIONS = 4
+
 class OpenAiHttpServer(
   private val availableModelsProvider: () -> List<OpenAiModelInfo>,
   private val currentModelNameProvider: () -> String?,
-  private val chatConversationFactory: (OpenAiChatRequest) -> Conversation?,
-  private val sharedChatConversationFactory: ((OpenAiChatRequest) -> Conversation?)? = null,
-  private val responsesConversationFactory: (OpenAiResponsesRequest) -> Conversation? = {
-      request ->
-    chatConversationFactory(
-      OpenAiChatRequest(
-        model = request.model,
-        messages = request.messages,
-        stream = request.stream,
-        temperature = request.temperature,
-        top_p = request.top_p,
-        top_k = request.top_k,
-        max_tokens = request.max_tokens,
-      )
-    )
-  },
-  private val sharedResponsesConversationFactory: ((OpenAiResponsesRequest) -> Conversation?)? = null,
+  private val chatSessionFactory: (OpenAiChatRequest) -> Session?,
+  private val responsesSessionFactory: ((OpenAiResponsesRequest) -> Session?)? = null,
   private val authTokenProvider: () -> String? = { null },
   private val lanAuthBypassProvider: (String?) -> Boolean = { false },
   private val onError: (String) -> Unit = {},
 ) : AutoCloseable {
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
   private val gson = Gson()
-  private val requestMutex = Mutex()
-  private val activeResponses = ConcurrentHashMap<String, Conversation>()
-  private val activeConversation = AtomicReference<Conversation?>(null)
+  private val sessionRegistryLock = Any()
+  private val activeResponses = LinkedHashMap<String, HttpSessionState>(16, 0.75f, true)
   private var serverSocket: ServerSocket? = null
   private var acceptJob: Job? = null
   private var bindAddress: Inet4Address? = null
   private var port: Int = 0
-  private val ownsConversations: Boolean
-    get() = sharedChatConversationFactory == null && sharedResponsesConversationFactory == null
 
   val servedModelName: String?
     get() = currentModelNameProvider()
@@ -200,13 +189,15 @@ class OpenAiHttpServer(
   }
 
   fun stop(reason: String) {
-    if (ownsConversations) {
-      activeConversation.getAndSet(null)?.let { closeConversation(it) }
-      for (conversation in activeResponses.values) {
-        closeConversation(conversation)
+    val sessionsToClose =
+      synchronized(sessionRegistryLock) {
+        activeResponses.values.distinctBy { it.session }.toList().also {
+          activeResponses.clear()
+        }
       }
+    for (sessionState in sessionsToClose) {
+      closeSession(sessionState.session)
     }
-    activeResponses.clear()
     try {
       serverSocket?.close()
     } catch (_: Exception) {
@@ -288,8 +279,8 @@ class OpenAiHttpServer(
   }
 
   private suspend fun handleChatCompletion(socket: Socket, request: OpenAiChatRequest) {
-    val modelConversation = sharedChatConversationFactory?.invoke(request) ?: chatConversationFactory(request)
-    if (modelConversation == null) {
+    val session = chatSessionFactory(request)
+    if (session == null) {
       writeJsonResponse(
         socket,
         503,
@@ -301,7 +292,7 @@ class OpenAiHttpServer(
 
     val nonSystemMessages = request.messages.filter { it.role.lowercase() != "system" }
     if (nonSystemMessages.isEmpty()) {
-      closeConversation(modelConversation)
+      closeSession(session)
       writeJsonResponse(
         socket,
         400,
@@ -313,29 +304,12 @@ class OpenAiHttpServer(
 
     val promptIndex = request.messages.indexOfLast { it.role.lowercase() != "system" }
     val promptMessage = request.messages[promptIndex]
-    val historyMessages =
-      request.messages.take(promptIndex).filter { it.role.lowercase() != "system" }
-    val systemText =
-      request.messages.filter { it.role.lowercase() == "system" }.joinToString("\n\n") {
-        it.extractText()
-      }
-
-    val conversation =
-      if (historyMessages.isEmpty() && systemText.isBlank()) {
-        modelConversation
-      } else {
-        modelConversation
-      }
-
-    activeConversation.set(conversation)
     try {
       if (request.stream) {
-        streamChat(socket, conversation, promptMessage, modelName(request.model))
+        streamChat(socket, session, promptMessage, modelName(request.model))
       } else {
         val responseText =
-          requestMutex.withLock {
-            conversation.sendMessage(Contents.of(promptMessage.extractText())).toString()
-          }
+          session.generateContent(listOf(InputData.Text(promptMessage.extractText())))
         val response =
           OpenAiChatCompletionResponse(
             id = "chatcmpl-${UUID.randomUUID()}",
@@ -352,32 +326,11 @@ class OpenAiHttpServer(
         writeJsonResponse(socket, 200, "OK", response)
       }
     } finally {
-      activeConversation.compareAndSet(conversation, null)
-      if (ownsConversations) {
-        closeConversation(conversation)
-      }
+      closeSession(session)
     }
   }
 
   private suspend fun handleResponses(socket: Socket, request: OpenAiResponsesRequest) {
-    val requestedModelName = modelName(request.model)
-    val existingConversation =
-      request.previous_response_id?.let { activeResponses[it] }
-
-    val conversation =
-      existingConversation
-        ?: sharedResponsesConversationFactory?.invoke(request)
-        ?: responsesConversationFactory(request)
-        ?: run {
-          writeJsonResponse(
-            socket,
-            503,
-            "Service Unavailable",
-            jsonObjectOf("error" to jsonObjectOf("message" to "Model is not initialized")),
-          )
-          return
-        }
-
     val prompt = request.extractPrompt()
     if (prompt.isBlank()) {
       writeJsonResponse(
@@ -386,22 +339,71 @@ class OpenAiHttpServer(
         "Bad Request",
         jsonObjectOf("error" to jsonObjectOf("message" to "Missing input")),
       )
-      if (existingConversation == null) {
-        closeConversation(conversation)
-      }
       return
     }
 
-    val responseId = request.previous_response_id ?: "resp-${UUID.randomUUID()}"
-    activeResponses[responseId] = conversation
-    activeConversation.set(conversation)
+    val existingSessionState =
+      request.previous_response_id?.let { previousId ->
+        synchronized(sessionRegistryLock) { activeResponses[previousId] }
+      }
+    if (request.previous_response_id != null && existingSessionState != null && !existingSessionState.session.isAlive) {
+      synchronized(sessionRegistryLock) { activeResponses.remove(request.previous_response_id) }
+      writeJsonResponse(
+        socket,
+        410,
+        "Gone",
+        jsonObjectOf(
+          "error" to jsonObjectOf("message" to "previous_response_id ${request.previous_response_id} is no longer valid")
+        ),
+      )
+      return
+    }
+    val sessionState =
+      if (request.previous_response_id != null) {
+        existingSessionState
+          ?: run {
+            writeJsonResponse(
+              socket,
+              404,
+              "Not Found",
+              jsonObjectOf(
+                "error" to jsonObjectOf("message" to "Unknown previous_response_id ${request.previous_response_id}")
+              ),
+            )
+            return
+          }
+      } else {
+        responsesSessionFactory?.invoke(request)?.let {
+          HttpSessionState(modelName = modelName(request.model), session = it)
+        }
+    } ?: run {
+      writeJsonResponse(
+        socket,
+        503,
+          "Service Unavailable",
+          jsonObjectOf("error" to jsonObjectOf("message" to "Model is not initialized")),
+        )
+      return
+    }
+    val requestedModelName = sessionState.modelName
+
+    val responseId = "resp-${UUID.randomUUID()}"
+    val evictedSessions =
+      synchronized(sessionRegistryLock) {
+        if (request.previous_response_id != null) {
+          activeResponses.remove(request.previous_response_id)
+        }
+        activeResponses[responseId] = sessionState
+        evictSessionsLocked()
+      }
+    evictedSessions.forEach { closeSession(it.session) }
     try {
       if (request.stream) {
-        streamResponse(socket, conversation, prompt, responseId, requestedModelName)
+        streamResponse(socket, sessionState, prompt, responseId, requestedModelName)
       } else {
         val textOutput =
-          requestMutex.withLock {
-            conversation.sendMessage(Contents.of(prompt)).toString()
+          sessionState.mutex.withLock {
+            sessionState.session.generateContent(listOf(InputData.Text(prompt)))
           }
         val response =
           OpenAiResponse(
@@ -426,19 +428,18 @@ class OpenAiHttpServer(
         writeJsonResponse(socket, 200, "OK", response)
       }
     } finally {
-      activeConversation.compareAndSet(conversation, null)
       if (request.previous_response_id == null) {
-        activeResponses[responseId] = conversation
-      }
-      if (ownsConversations) {
-        closeConversation(conversation)
+        synchronized(sessionRegistryLock) {
+          activeResponses[responseId] = sessionState
+          evictSessionsLocked()
+        }.forEach { closeSession(it.session) }
       }
     }
   }
 
   private suspend fun streamChat(
     socket: Socket,
-    conversation: Conversation,
+    session: Session,
     promptMessage: OpenAiChatMessage,
     modelName: String,
   ) {
@@ -455,32 +456,12 @@ class OpenAiHttpServer(
     val created = System.currentTimeMillis() / 1000L
     val completed = CompletableDeferred<Unit>()
 
-    requestMutex.withLock {
-      try {
-        conversation.sendMessageAsync(
-          Contents.of(promptMessage.extractText()),
-          object : MessageCallback {
-            override fun onMessage(message: Message) {
-              val delta = message.toString()
-              if (delta.isNotEmpty()) {
-                writeSseEvent(
-                  writer,
-                  OpenAiChatCompletionChunk(
-                    id = id,
-                    created = created,
-                    model = modelName,
-                    choices =
-                      listOf(
-                        OpenAiChatChoice(
-                          delta = OpenAiChatCompletionMessage(content = delta),
-                        )
-                      ),
-                  ),
-                )
-              }
-            }
-
-            override fun onDone() {
+    try {
+      session.generateContentStream(
+        listOf(InputData.Text(promptMessage.extractText())),
+        object : ResponseCallback {
+          override fun onNext(text: String) {
+            if (text.isNotEmpty()) {
               writeSseEvent(
                 writer,
                 OpenAiChatCompletionChunk(
@@ -490,58 +471,75 @@ class OpenAiHttpServer(
                   choices =
                     listOf(
                       OpenAiChatChoice(
-                        delta = OpenAiChatCompletionMessage(content = ""),
-                        finish_reason = "stop",
+                        delta = OpenAiChatCompletionMessage(content = text),
                       )
                     ),
                 ),
               )
-              writer.write("data: [DONE]\n\n")
-              writer.flush()
-              if (!completed.isCompleted) {
-                completed.complete(Unit)
-              }
             }
+          }
 
-            override fun onError(throwable: Throwable) {
-              val finishReason = if (throwable is CancellationException) "cancelled" else "error"
-              writeSseEvent(
-                writer,
-                jsonObjectOf(
-                  "id" to id,
-                  "object" to "chat.completion.chunk",
-                  "created" to created,
-                  "model" to modelName,
-                  "choices" to
-                    listOf(
-                      mapOf(
-                        "index" to 0,
-                        "delta" to mapOf("content" to ""),
-                        "finish_reason" to finishReason,
-                      )
-                    ),
-                ),
-              )
-              writer.write("data: [DONE]\n\n")
-              writer.flush()
-              if (!completed.isCompleted) {
-                completed.complete(Unit)
-              }
+          override fun onDone() {
+            writeSseEvent(
+              writer,
+              OpenAiChatCompletionChunk(
+                id = id,
+                created = created,
+                model = modelName,
+                choices =
+                  listOf(
+                    OpenAiChatChoice(
+                      delta = OpenAiChatCompletionMessage(content = ""),
+                      finish_reason = "stop",
+                    )
+                  ),
+              ),
+            )
+            writer.write("data: [DONE]\n\n")
+            writer.flush()
+            if (!completed.isCompleted) {
+              completed.complete(Unit)
             }
-          },
-        )
-        completed.await()
-      } finally {
-        if (!completed.isCompleted) {
-          completed.complete(Unit)
-        }
+          }
+
+          override fun onError(throwable: Throwable) {
+            val finishReason = if (throwable is CancellationException) "cancelled" else "error"
+            writeSseEvent(
+              writer,
+              jsonObjectOf(
+                "id" to id,
+                "object" to "chat.completion.chunk",
+                "created" to created,
+                "model" to modelName,
+                "choices" to
+                  listOf(
+                    mapOf(
+                      "index" to 0,
+                      "delta" to mapOf("content" to ""),
+                      "finish_reason" to finishReason,
+                    )
+                  ),
+              ),
+            )
+            writer.write("data: [DONE]\n\n")
+            writer.flush()
+            if (!completed.isCompleted) {
+              completed.complete(Unit)
+            }
+          }
+        },
+      )
+      completed.await()
+    } finally {
+      if (!completed.isCompleted) {
+        completed.complete(Unit)
       }
     }
   }
 
   private suspend fun streamResponse(
     socket: Socket,
-    conversation: Conversation,
+    sessionState: HttpSessionState,
     prompt: String,
     responseId: String,
     modelName: String,
@@ -564,17 +562,16 @@ class OpenAiHttpServer(
     )
     writer.flush()
 
-    requestMutex.withLock {
+    sessionState.mutex.withLock {
       try {
-        conversation.sendMessageAsync(
-          Contents.of(prompt),
-          object : MessageCallback {
-            override fun onMessage(message: Message) {
-              val delta = message.toString()
-              if (delta.isNotEmpty()) {
+        sessionState.session.generateContentStream(
+          listOf(InputData.Text(prompt)),
+          object : ResponseCallback {
+            override fun onNext(text: String) {
+              if (text.isNotEmpty()) {
                 writer.write(
                   "event: response.output_text.delta\n" +
-                    "data: ${gson.toJson(jsonObjectOf("delta" to jsonObjectOf("text" to delta)))}\n\n"
+                    "data: ${gson.toJson(jsonObjectOf("delta" to jsonObjectOf("text" to text)))}\n\n"
                 )
                 writer.flush()
               }
@@ -614,12 +611,22 @@ class OpenAiHttpServer(
     }
   }
 
-  private fun closeConversation(conversation: Conversation?) {
-    if (conversation == null) return
+  private fun closeSession(session: Session?) {
+    if (session == null) return
     try {
-      conversation.close()
+      session.close()
     } catch (_: Exception) {
     }
+  }
+
+  private fun evictSessionsLocked(): List<HttpSessionState> {
+    val evicted = mutableListOf<HttpSessionState>()
+    while (activeResponses.size > MAX_HTTP_SESSIONS) {
+      val oldestEntry = activeResponses.entries.iterator().next()
+      activeResponses.remove(oldestEntry.key)
+      evicted.add(oldestEntry.value)
+    }
+    return evicted
   }
 
   private fun modelName(requestModel: String?): String = requestModel?.takeIf { it.isNotBlank() } ?: currentModelNameProvider().orEmpty()
