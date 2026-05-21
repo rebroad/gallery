@@ -87,6 +87,12 @@ private const val ACTIVE_MODEL_SECRET_KEY = "active_litertlm_model_name"
 private const val PHONE_SERVER_BIND_ADDRESS_SECRET_KEY = "phone_server_bind_address"
 private const val PHONE_SERVER_PORT_SECRET_KEY = "phone_server_port"
 private const val PHONE_SERVER_AUTO_START_SECRET_KEY = "phone_server_auto_start"
+private const val PHONE_SERVER_STATEFUL_HTTP_RESPONSES_SECRET_KEY =
+  "phone_server_stateful_http_responses"
+private const val PHONE_SERVER_MAX_CACHED_HTTP_SESSIONS_SECRET_KEY =
+  "phone_server_max_cached_http_sessions"
+private const val PHONE_SERVER_HTTP_SESSION_IDLE_TIMEOUT_MINUTES_SECRET_KEY =
+  "phone_server_http_session_idle_timeout_minutes"
 private const val TEXT_INPUT_HISTORY_MAX_SIZE = 50
 private const val MODEL_ALLOWLIST_FILENAME = "model_allowlist.json"
 private const val MODEL_ALLOWLIST_TEST_FILENAME = "model_allowlist_test.json"
@@ -229,6 +235,20 @@ constructor(
         dataStoreRepository.readSecret(PHONE_SERVER_AUTO_START_SECRET_KEY)?.toBooleanStrictOrNull()
           ?: false,
     )
+    PhoneOpenAiServerStore.setHttpSessionConfig(
+      statefulHttpResponses =
+        dataStoreRepository.readSecret(PHONE_SERVER_STATEFUL_HTTP_RESPONSES_SECRET_KEY)
+          ?.toBooleanStrictOrNull()
+          ?: true,
+      maxCachedHttpSessions =
+        dataStoreRepository.readSecret(PHONE_SERVER_MAX_CACHED_HTTP_SESSIONS_SECRET_KEY)
+          ?.toIntOrNull()
+          ?: 4,
+      httpSessionIdleTimeoutMinutes =
+        dataStoreRepository.readSecret(PHONE_SERVER_HTTP_SESSION_IDLE_TIMEOUT_MINUTES_SECRET_KEY)
+          ?.toIntOrNull()
+          ?: 10,
+    )
     viewModelScope.launch(Dispatchers.Default) {
       PhoneOpenAiServerStore.state.collect { serverState ->
         val modelName = serverState.modelName
@@ -366,6 +386,53 @@ constructor(
       autoStartOnAppLaunch = autoStart,
     )
     dataStoreRepository.saveSecret(PHONE_SERVER_AUTO_START_SECRET_KEY, autoStart.toString())
+  }
+
+  fun getPhoneServerStatefulHttpResponses(): Boolean {
+    return PhoneOpenAiServerStore.state.value.statefulHttpResponses
+  }
+
+  fun setPhoneServerStatefulHttpResponses(enabled: Boolean) {
+    PhoneOpenAiServerStore.setHttpSessionConfig(
+      statefulHttpResponses = enabled,
+      maxCachedHttpSessions = PhoneOpenAiServerStore.state.value.maxCachedHttpSessions,
+      httpSessionIdleTimeoutMinutes = PhoneOpenAiServerStore.state.value.httpSessionIdleTimeoutMinutes,
+    )
+    dataStoreRepository.saveSecret(PHONE_SERVER_STATEFUL_HTTP_RESPONSES_SECRET_KEY, enabled.toString())
+  }
+
+  fun getPhoneServerMaxCachedHttpSessions(): Int {
+    return PhoneOpenAiServerStore.state.value.maxCachedHttpSessions
+  }
+
+  fun setPhoneServerMaxCachedHttpSessions(maxSessions: Int) {
+    val sanitized = maxSessions.coerceAtLeast(1)
+    PhoneOpenAiServerStore.setHttpSessionConfig(
+      statefulHttpResponses = PhoneOpenAiServerStore.state.value.statefulHttpResponses,
+      maxCachedHttpSessions = sanitized,
+      httpSessionIdleTimeoutMinutes = PhoneOpenAiServerStore.state.value.httpSessionIdleTimeoutMinutes,
+    )
+    dataStoreRepository.saveSecret(
+      PHONE_SERVER_MAX_CACHED_HTTP_SESSIONS_SECRET_KEY,
+      sanitized.toString(),
+    )
+  }
+
+  fun getPhoneServerHttpSessionIdleTimeoutMinutes(): Int {
+    return PhoneOpenAiServerStore.state.value.httpSessionIdleTimeoutMinutes
+  }
+
+  fun setPhoneServerHttpSessionIdleTimeoutMinutes(timeoutMinutes: Int) {
+    val sanitized = timeoutMinutes.coerceAtLeast(1)
+    PhoneOpenAiServerStore.setHttpSessionConfig(
+      statefulHttpResponses = PhoneOpenAiServerStore.state.value.statefulHttpResponses,
+      maxCachedHttpSessions = PhoneOpenAiServerStore.state.value.maxCachedHttpSessions,
+      httpSessionIdleTimeoutMinutes = sanitized,
+    )
+    dataStoreRepository.saveSecret(
+      PHONE_SERVER_HTTP_SESSION_IDLE_TIMEOUT_MINUTES_SECRET_KEY,
+      sanitized.toString(),
+    )
   }
 
   open fun downloadModel(task: Task?, model: Model) {

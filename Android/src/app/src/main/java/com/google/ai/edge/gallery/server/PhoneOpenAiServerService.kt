@@ -133,6 +133,10 @@ class PhoneOpenAiServerService : Service() {
         currentModelNameProvider = { PhoneOpenAiServerStore.currentModel?.name ?: model.name },
         chatSessionFactory = { request -> createHttpSession(request.model, request) },
         responsesSessionFactory = { request -> createHttpSession(request.model, request) },
+        statefulResponsesEnabled = PhoneOpenAiServerStore.state.value.statefulHttpResponses,
+        maxCachedHttpSessions = PhoneOpenAiServerStore.state.value.maxCachedHttpSessions,
+        sessionIdleTimeoutMillis =
+          PhoneOpenAiServerStore.state.value.httpSessionIdleTimeoutMinutes * 60_000L,
         authTokenProvider = { null },
         lanAuthBypassProvider = { hostAddress ->
           PhoneOpenAiServerStore.allowLanNoAuth &&
@@ -334,36 +338,28 @@ class PhoneOpenAiServerService : Service() {
     return model.instance as? LlmModelInstance
   }
 
-  private fun OpenAiChatRequest.toSessionConfig(model: Model): SessionConfig {
-    val topK =
-      top_k ?: model.getIntConfigValue(key = ConfigKeys.TOPK, defaultValue = DEFAULT_TOPK)
-    val topP =
-      top_p ?: model.getFloatConfigValue(key = ConfigKeys.TOPP, defaultValue = DEFAULT_TOPP)
-    val temperature =
-      temperature
-        ?: model.getFloatConfigValue(key = ConfigKeys.TEMPERATURE, defaultValue = DEFAULT_TEMPERATURE)
-    return SessionConfig(
-      SamplerConfig(
-        topK = topK,
-        topP = topP.toDouble(),
-        temperature = temperature.toDouble(),
-      )
-    )
-  }
+  private fun OpenAiChatRequest.toSessionConfig(model: Model): SessionConfig =
+    buildSessionConfig(model, top_k, top_p, temperature)
 
-  private fun OpenAiResponsesRequest.toSessionConfig(model: Model): SessionConfig {
-    val topK =
-      top_k ?: model.getIntConfigValue(key = ConfigKeys.TOPK, defaultValue = DEFAULT_TOPK)
-    val topP =
-      top_p ?: model.getFloatConfigValue(key = ConfigKeys.TOPP, defaultValue = DEFAULT_TOPP)
-    val temperature =
+  private fun OpenAiResponsesRequest.toSessionConfig(model: Model): SessionConfig =
+    buildSessionConfig(model, top_k, top_p, temperature)
+
+  private fun buildSessionConfig(
+    model: Model,
+    topK: Int?,
+    topP: Double?,
+    temperature: Double?,
+  ): SessionConfig {
+    val resolvedTopK = topK ?: model.getIntConfigValue(key = ConfigKeys.TOPK, defaultValue = DEFAULT_TOPK)
+    val resolvedTopP = topP ?: model.getFloatConfigValue(key = ConfigKeys.TOPP, defaultValue = DEFAULT_TOPP).toDouble()
+    val resolvedTemperature =
       temperature
-        ?: model.getFloatConfigValue(key = ConfigKeys.TEMPERATURE, defaultValue = DEFAULT_TEMPERATURE)
+        ?: model.getFloatConfigValue(key = ConfigKeys.TEMPERATURE, defaultValue = DEFAULT_TEMPERATURE).toDouble()
     return SessionConfig(
       SamplerConfig(
-        topK = topK,
-        topP = topP.toDouble(),
-        temperature = temperature.toDouble(),
+        topK = resolvedTopK,
+        topP = resolvedTopP,
+        temperature = resolvedTemperature,
       )
     )
   }

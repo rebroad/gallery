@@ -78,6 +78,12 @@ fun PhoneOpenAiServerScreen(
   }
   var bindMenuExpanded by remember { mutableStateOf(false) }
   var portText by remember(serverState.port) { mutableStateOf(serverState.port.toString()) }
+  var maxCachedSessionsText by remember(serverState.maxCachedHttpSessions) {
+    mutableStateOf(serverState.maxCachedHttpSessions.toString())
+  }
+  var idleTimeoutText by remember(serverState.httpSessionIdleTimeoutMinutes) {
+    mutableStateOf(serverState.httpSessionIdleTimeoutMinutes.toString())
+  }
   val isRunning = serverState.status == PhoneOpenAiServerStatus.RUNNING
   val isStarting = serverState.status == PhoneOpenAiServerStatus.STARTING
   val statusText =
@@ -292,6 +298,96 @@ fun PhoneOpenAiServerScreen(
               onCheckedChange = { checked ->
                 modelManagerViewModel.setPhoneServerAutoStart(checked)
               },
+            )
+          }
+        }
+      }
+
+      Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.fillMaxWidth(),
+      ) {
+        Column(
+          modifier = Modifier.fillMaxWidth().padding(12.dp),
+          verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+          Text(
+            text = stringResource(R.string.phone_server_advanced_settings_label),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+          )
+
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Column(modifier = Modifier.weight(1f)) {
+              Text(
+                text = stringResource(R.string.phone_server_stateful_http_responses_label),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+              )
+              Spacer(modifier = Modifier.height(2.dp))
+              Text(
+                text = stringResource(R.string.phone_server_stateful_http_responses_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+              )
+            }
+            Switch(
+              checked = serverState.statefulHttpResponses,
+              onCheckedChange = { checked ->
+                modelManagerViewModel.setPhoneServerStatefulHttpResponses(checked)
+              },
+            )
+          }
+
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            OutlinedTextField(
+              value = maxCachedSessionsText,
+              onValueChange = { next ->
+                if (next.isEmpty() || next.all(Char::isDigit)) {
+                  maxCachedSessionsText = next
+                  next.toIntOrNull()?.let { modelManagerViewModel.setPhoneServerMaxCachedHttpSessions(it) }
+                }
+              },
+              label = { Text(stringResource(R.string.phone_server_max_cached_http_sessions_label)) },
+              supportingText = {
+                Text(stringResource(R.string.phone_server_max_cached_http_sessions_hint))
+              },
+              singleLine = true,
+              textStyle = MaterialTheme.typography.bodyMedium,
+              modifier = Modifier.weight(1f),
+            )
+          }
+
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            OutlinedTextField(
+              value = idleTimeoutText,
+              onValueChange = { next ->
+                if (next.isEmpty() || next.all(Char::isDigit)) {
+                  idleTimeoutText = next
+                  next.toIntOrNull()?.let {
+                    modelManagerViewModel.setPhoneServerHttpSessionIdleTimeoutMinutes(it)
+                  }
+                }
+              },
+              label = { Text(stringResource(R.string.phone_server_http_session_idle_timeout_label)) },
+              supportingText = {
+                Text(stringResource(R.string.phone_server_http_session_idle_timeout_hint))
+              },
+              singleLine = true,
+              textStyle = MaterialTheme.typography.bodyMedium,
+              modifier = Modifier.weight(1f),
             )
           }
         }

@@ -124,6 +124,13 @@
   <string name="phone_server_port_label" translatable="false">Port</string>
   <string name="phone_server_auto_start_label" translatable="false">Start on app launch</string>
   <string name="phone_server_auto_start_hint" translatable="false">Automatically start the server when Gallery opens.</string>
+  <string name="phone_server_advanced_settings_label" translatable="false">Advanced settings</string>
+  <string name="phone_server_stateful_http_responses_label" translatable="false">Stateful HTTP responses</string>
+  <string name="phone_server_stateful_http_responses_hint" translatable="false">Remember HTTP responses so previous_response_id can resume a conversation.</string>
+  <string name="phone_server_max_cached_http_sessions_label" translatable="false">Max cached HTTP sessions</string>
+  <string name="phone_server_max_cached_http_sessions_hint" translatable="false">Limit how many HTTP sessions stay warm in memory.</string>
+  <string name="phone_server_http_session_idle_timeout_label" translatable="false">HTTP session idle timeout (minutes)</string>
+  <string name="phone_server_http_session_idle_timeout_hint" translatable="false">Drop cached HTTP sessions after this many idle minutes.</string>
   <string name="edit" translatable="false">Edit</string>
   <string name="edit_secret" translatable="false">Edit secret</string>
   <string name="enter_instruction" translatable="false">Enter instruction</string>

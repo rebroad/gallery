@@ -38,6 +38,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -139,16 +140,21 @@ private data class HttpRequest(
 private data class HttpSessionState(
   val modelName: String,
   val session: Session,
+  var lastAccessMillis: Long = System.currentTimeMillis(),
   val mutex: Mutex = Mutex(),
 )
 
-private const val MAX_HTTP_SESSIONS = 4
+private const val DEFAULT_MAX_HTTP_SESSIONS = 4
+private const val DEFAULT_HTTP_SESSION_IDLE_TIMEOUT_MILLIS = 10 * 60 * 1000L
 
 class OpenAiHttpServer(
   private val availableModelsProvider: () -> List<OpenAiModelInfo>,
   private val currentModelNameProvider: () -> String?,
   private val chatSessionFactory: (OpenAiChatRequest) -> Session?,
   private val responsesSessionFactory: ((OpenAiResponsesRequest) -> Session?)? = null,
+  private val statefulResponsesEnabled: Boolean = true,
+  private val maxCachedHttpSessions: Int = DEFAULT_MAX_HTTP_SESSIONS,
+  private val sessionIdleTimeoutMillis: Long = DEFAULT_HTTP_SESSION_IDLE_TIMEOUT_MILLIS,
   private val authTokenProvider: () -> String? = { null },
   private val lanAuthBypassProvider: (String?) -> Boolean = { false },
   private val onError: (String) -> Unit = {},
@@ -159,6 +165,7 @@ class OpenAiHttpServer(
   private val activeResponses = LinkedHashMap<String, HttpSessionState>(16, 0.75f, true)
   private var serverSocket: ServerSocket? = null
   private var acceptJob: Job? = null
+  private var cleanupJob: Job? = null
   private var bindAddress: Inet4Address? = null
   private var port: Int = 0
 
@@ -182,8 +189,26 @@ class OpenAiHttpServer(
               serverSocket?.accept() ?: break
             } catch (_: IOException) {
               break
-            }
+          }
           launch { handleClient(socket) }
+        }
+      }
+
+    cleanupJob =
+      scope.launch {
+        while (true) {
+          val cleanupDelayMillis =
+            when {
+              !statefulResponsesEnabled -> 60_000L
+              sessionIdleTimeoutMillis <= 0L -> 60_000L
+              else -> maxOf(1_000L, minOf(sessionIdleTimeoutMillis / 2, 60_000L))
+            }
+          delay(cleanupDelayMillis)
+          val evicted =
+            synchronized(sessionRegistryLock) {
+              evictExpiredSessionsLocked(System.currentTimeMillis())
+            }
+          evicted.forEach { closeSession(it.session) }
         }
       }
   }
@@ -205,6 +230,8 @@ class OpenAiHttpServer(
     serverSocket = null
     acceptJob?.cancel()
     acceptJob = null
+    cleanupJob?.cancel()
+    cleanupJob = null
   }
 
   override fun close() {
@@ -342,22 +369,49 @@ class OpenAiHttpServer(
       return
     }
 
+    if (request.previous_response_id != null && !statefulResponsesEnabled) {
+      writeJsonResponse(
+        socket,
+        400,
+        "Bad Request",
+        jsonObjectOf(
+          "error" to
+            jsonObjectOf(
+              "message" to "Stateful HTTP responses are disabled. Omit previous_response_id."
+            )
+        ),
+      )
+      return
+    }
+
+    val now = System.currentTimeMillis()
     val existingSessionState =
       request.previous_response_id?.let { previousId ->
-        synchronized(sessionRegistryLock) { activeResponses[previousId] }
+        synchronized(sessionRegistryLock) {
+          evictExpiredSessionsLocked(now)
+          activeResponses[previousId]
+        }
       }
-    if (request.previous_response_id != null && existingSessionState != null && !existingSessionState.session.isAlive) {
+    if (
+      request.previous_response_id != null &&
+        existingSessionState != null &&
+        !existingSessionState.session.isAlive
+    ) {
       synchronized(sessionRegistryLock) { activeResponses.remove(request.previous_response_id) }
       writeJsonResponse(
         socket,
         410,
         "Gone",
         jsonObjectOf(
-          "error" to jsonObjectOf("message" to "previous_response_id ${request.previous_response_id} is no longer valid")
+          "error" to
+            jsonObjectOf(
+              "message" to "previous_response_id ${request.previous_response_id} is no longer valid"
+            )
         ),
       )
       return
     }
+
     val sessionState =
       if (request.previous_response_id != null) {
         existingSessionState
@@ -367,42 +421,56 @@ class OpenAiHttpServer(
               404,
               "Not Found",
               jsonObjectOf(
-                "error" to jsonObjectOf("message" to "Unknown previous_response_id ${request.previous_response_id}")
+                "error" to
+                  jsonObjectOf(
+                    "message" to "Unknown previous_response_id ${request.previous_response_id}"
+                  )
               ),
             )
             return
           }
       } else {
         responsesSessionFactory?.invoke(request)?.let {
-          HttpSessionState(modelName = modelName(request.model), session = it)
+          HttpSessionState(
+            modelName = modelName(request.model),
+            session = it,
+            lastAccessMillis = now,
+          )
         }
-    } ?: run {
-      writeJsonResponse(
-        socket,
-        503,
+      } ?: run {
+        writeJsonResponse(
+          socket,
+          503,
           "Service Unavailable",
           jsonObjectOf("error" to jsonObjectOf("message" to "Model is not initialized")),
         )
-      return
-    }
-    val requestedModelName = sessionState.modelName
+        return
+      }
 
+    val requestedModelName = sessionState.modelName
     val responseId = "resp-${UUID.randomUUID()}"
     val evictedSessions =
       synchronized(sessionRegistryLock) {
-        if (request.previous_response_id != null) {
-          activeResponses.remove(request.previous_response_id)
+        if (statefulResponsesEnabled) {
+          if (request.previous_response_id != null) {
+            activeResponses.remove(request.previous_response_id)
+          }
+          sessionState.lastAccessMillis = now
+          activeResponses[responseId] = sessionState
+          evictSessionsLocked(now)
+        } else {
+          emptyList()
         }
-        activeResponses[responseId] = sessionState
-        evictSessionsLocked()
       }
     evictedSessions.forEach { closeSession(it.session) }
+
     try {
       if (request.stream) {
         streamResponse(socket, sessionState, prompt, responseId, requestedModelName)
       } else {
         val textOutput =
           sessionState.mutex.withLock {
+            sessionState.lastAccessMillis = System.currentTimeMillis()
             sessionState.session.generateContent(listOf(InputData.Text(prompt)))
           }
         val response =
@@ -428,11 +496,10 @@ class OpenAiHttpServer(
         writeJsonResponse(socket, 200, "OK", response)
       }
     } finally {
-      if (request.previous_response_id == null) {
-        synchronized(sessionRegistryLock) {
-          activeResponses[responseId] = sessionState
-          evictSessionsLocked()
-        }.forEach { closeSession(it.session) }
+      if (statefulResponsesEnabled) {
+        sessionState.lastAccessMillis = System.currentTimeMillis()
+      } else {
+        closeSession(sessionState.session)
       }
     }
   }
@@ -564,6 +631,7 @@ class OpenAiHttpServer(
 
     sessionState.mutex.withLock {
       try {
+        sessionState.lastAccessMillis = System.currentTimeMillis()
         sessionState.session.generateContentStream(
           listOf(InputData.Text(prompt)),
           object : ResponseCallback {
@@ -619,14 +687,29 @@ class OpenAiHttpServer(
     }
   }
 
-  private fun evictSessionsLocked(): List<HttpSessionState> {
+  private fun evictSessionsLocked(nowMillis: Long): List<HttpSessionState> {
     val evicted = mutableListOf<HttpSessionState>()
-    while (activeResponses.size > MAX_HTTP_SESSIONS) {
+    evicted.addAll(evictExpiredSessionsLocked(nowMillis))
+    while (activeResponses.size > maxCachedHttpSessions) {
       val oldestEntry = activeResponses.entries.iterator().next()
       activeResponses.remove(oldestEntry.key)
       evicted.add(oldestEntry.value)
     }
     return evicted
+  }
+
+  private fun evictExpiredSessionsLocked(nowMillis: Long): List<HttpSessionState> {
+    if (!statefulResponsesEnabled || sessionIdleTimeoutMillis <= 0L) {
+      return emptyList()
+    }
+    val expiredKeys =
+      activeResponses.entries
+        .filter { nowMillis - it.value.lastAccessMillis >= sessionIdleTimeoutMillis }
+        .map { it.key }
+    if (expiredKeys.isEmpty()) {
+      return emptyList()
+    }
+    return expiredKeys.mapNotNull { activeResponses.remove(it) }
   }
 
   private fun modelName(requestModel: String?): String = requestModel?.takeIf { it.isNotBlank() } ?: currentModelNameProvider().orEmpty()

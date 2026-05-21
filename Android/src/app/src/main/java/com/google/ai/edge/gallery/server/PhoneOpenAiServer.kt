@@ -47,6 +47,9 @@ data class PhoneOpenAiServerState(
   val allowLanNoAuth: Boolean = true,
   val noAuthSubnetCidr: String = "",
   val autoStartOnAppLaunch: Boolean = false,
+  val statefulHttpResponses: Boolean = true,
+  val maxCachedHttpSessions: Int = 4,
+  val httpSessionIdleTimeoutMinutes: Int = 10,
   val error: String? = null,
 )
 
@@ -93,6 +96,20 @@ object PhoneOpenAiServerStore {
         preferredBindAddress = preferredBindAddress,
         port = port,
         autoStartOnAppLaunch = autoStartOnAppLaunch,
+      )
+    }
+  }
+
+  fun setHttpSessionConfig(
+    statefulHttpResponses: Boolean,
+    maxCachedHttpSessions: Int,
+    httpSessionIdleTimeoutMinutes: Int,
+  ) {
+    _state.update {
+      it.copy(
+        statefulHttpResponses = statefulHttpResponses,
+        maxCachedHttpSessions = maxCachedHttpSessions.coerceAtLeast(1),
+        httpSessionIdleTimeoutMinutes = httpSessionIdleTimeoutMinutes.coerceAtLeast(1),
       )
     }
   }
