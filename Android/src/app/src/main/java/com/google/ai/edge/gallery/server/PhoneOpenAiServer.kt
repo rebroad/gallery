@@ -50,6 +50,9 @@ data class PhoneOpenAiServerState(
   val statefulHttpResponses: Boolean = true,
   val maxCachedHttpSessions: Int = 4,
   val httpSessionIdleTimeoutMinutes: Int = 10,
+  val liveStatefulHttpResponses: Boolean? = null,
+  val liveStatefulHttpResponsesCheckedAtMillis: Long = 0L,
+  val liveHealthError: String? = null,
   val error: String? = null,
 )
 
@@ -114,6 +117,20 @@ object PhoneOpenAiServerStore {
     }
   }
 
+  fun setLiveHttpSessionHealth(
+    statefulHttpResponses: Boolean?,
+    checkedAtMillis: Long = System.currentTimeMillis(),
+    error: String? = null,
+  ) {
+    _state.update {
+      it.copy(
+        liveStatefulHttpResponses = statefulHttpResponses,
+        liveStatefulHttpResponsesCheckedAtMillis = checkedAtMillis,
+        liveHealthError = error,
+      )
+    }
+  }
+
   fun setLanAuthBypass(enabled: Boolean, subnetCidr: String = "") {
     allowLanNoAuth = enabled
     noAuthSubnetCidr = subnetCidr
@@ -128,6 +145,9 @@ object PhoneOpenAiServerStore {
         port = port,
         token = token,
         error = null,
+        liveStatefulHttpResponses = null,
+        liveStatefulHttpResponsesCheckedAtMillis = 0L,
+        liveHealthError = null,
       )
     }
   }
@@ -142,6 +162,9 @@ object PhoneOpenAiServerStore {
         modelName = modelName,
         allowLanNoAuth = allowLanNoAuth,
         noAuthSubnetCidr = noAuthSubnetCidr,
+        liveStatefulHttpResponses = null,
+        liveStatefulHttpResponsesCheckedAtMillis = 0L,
+        liveHealthError = null,
         error = null,
       )
     }
@@ -157,6 +180,9 @@ object PhoneOpenAiServerStore {
         status = PhoneOpenAiServerStatus.STOPPED,
         host = "",
         token = "",
+        liveStatefulHttpResponses = null,
+        liveStatefulHttpResponsesCheckedAtMillis = 0L,
+        liveHealthError = null,
         error = null,
       )
     }
@@ -193,7 +219,24 @@ object PhoneOpenAiServerManager {
     noAuthSubnetCidr: String = "",
   ): String? {
     val curStatus = PhoneOpenAiServerStore.state.value.status
-    if (curStatus == PhoneOpenAiServerStatus.STARTING || curStatus == PhoneOpenAiServerStatus.RUNNING) {
+    if (curStatus == PhoneOpenAiServerStatus.STARTING) {
+      return null
+    }
+
+    val desiredBindAddress =
+      resolveBindAddress(PhoneOpenAiServerStore.state.value.preferredBindAddress)?.hostAddress
+        .orEmpty()
+    val currentState = PhoneOpenAiServerStore.state.value
+    val currentBindAddress = currentState.host
+    val currentPort = currentState.port
+    val currentModelName = currentState.modelName
+    val desiredPort = currentState.port
+    val needsRestart =
+      curStatus == PhoneOpenAiServerStatus.RUNNING &&
+        (currentBindAddress != desiredBindAddress ||
+          currentPort != desiredPort ||
+          currentModelName != model.name)
+    if (curStatus == PhoneOpenAiServerStatus.RUNNING && !needsRestart) {
       return null
     }
 
@@ -236,6 +279,8 @@ internal fun resolveBindAddress(preferredBindAddress: String? = null): Inet4Addr
       Log.i("AGPhoneOpenAiServer", "Selected preferred bind address ${it.hostAddress}")
       return it
     }
+    Log.w("AGPhoneOpenAiServer", "Preferred bind address $preferred is unavailable")
+    return null
   }
   candidates.firstOrNull { it.hostAddress?.startsWith("192.168.192.") == true }?.let {
     Log.i("AGPhoneOpenAiServer", "Selected preferred bind address ${it.hostAddress}")

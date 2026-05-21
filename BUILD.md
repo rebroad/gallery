@@ -2,6 +2,12 @@
 
 This guide shows the basic commands to build and install the Android app.
 
+If you want a one-shot build + install helper that also rebuilds LiteRT-LM when it changed, use:
+
+```bash
+./scripts/build_and_install_phone.sh
+```
+
 ## Prerequisites
 
 - Android SDK installed

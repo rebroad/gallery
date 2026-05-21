@@ -20,6 +20,7 @@ import com.google.gson.Gson
 import com.google.gson.JsonElement
 import com.google.gson.JsonNull
 import com.google.gson.JsonObject
+import java.util.Base64
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
@@ -72,11 +73,18 @@ data class OpenAiResponsesRequest(
   val input: JsonElement? = null,
   val messages: List<OpenAiChatMessage> = emptyList(),
   val previous_response_id: String? = null,
+  val audio_base64: String? = null,
   val stream: Boolean = false,
   val temperature: Double? = null,
   val top_p: Double? = null,
   val top_k: Int? = null,
   val max_tokens: Int? = null,
+)
+
+data class OpenAiAudioTranscriptionRequest(
+  val model: String? = null,
+  val prompt: String? = null,
+  val audio_base64: String? = null,
 )
 
 data class OpenAiChatCompletionMessage(val role: String = "assistant", val content: String = "")
@@ -139,7 +147,8 @@ private data class HttpRequest(
 
 private data class HttpSessionState(
   val modelName: String,
-  val session: Session,
+  val conversationConfig: ConversationConfig,
+  val history: List<Message>,
   var lastAccessMillis: Long = System.currentTimeMillis(),
   val mutex: Mutex = Mutex(),
 )
@@ -151,10 +160,13 @@ class OpenAiHttpServer(
   private val availableModelsProvider: () -> List<OpenAiModelInfo>,
   private val currentModelNameProvider: () -> String?,
   private val chatSessionFactory: (OpenAiChatRequest) -> Session?,
-  private val responsesSessionFactory: ((OpenAiResponsesRequest) -> Session?)? = null,
-  private val statefulResponsesEnabled: Boolean = true,
-  private val maxCachedHttpSessions: Int = DEFAULT_MAX_HTTP_SESSIONS,
-  private val sessionIdleTimeoutMillis: Long = DEFAULT_HTTP_SESSION_IDLE_TIMEOUT_MILLIS,
+  private val responsesConversationFactory: ((ConversationConfig) -> Conversation?)? = null,
+  private val audioTranscriptionConversationFactory: ((ConversationConfig) -> Conversation?)? =
+    null,
+  private val statefulResponsesEnabledProvider: () -> Boolean = { true },
+  private val maxCachedHttpSessionsProvider: () -> Int = { DEFAULT_MAX_HTTP_SESSIONS },
+  private val sessionIdleTimeoutMillisProvider: () -> Long =
+    { DEFAULT_HTTP_SESSION_IDLE_TIMEOUT_MILLIS },
   private val authTokenProvider: () -> String? = { null },
   private val lanAuthBypassProvider: (String?) -> Boolean = { false },
   private val onError: (String) -> Unit = {},
@@ -199,30 +211,20 @@ class OpenAiHttpServer(
         while (true) {
           val cleanupDelayMillis =
             when {
-              !statefulResponsesEnabled -> 60_000L
-              sessionIdleTimeoutMillis <= 0L -> 60_000L
-              else -> maxOf(1_000L, minOf(sessionIdleTimeoutMillis / 2, 60_000L))
-            }
+              !isStatefulResponsesEnabled() -> 60_000L
+              sessionIdleTimeoutMillis() <= 0L -> 60_000L
+              else -> maxOf(1_000L, minOf(sessionIdleTimeoutMillis() / 2, 60_000L))
+          }
           delay(cleanupDelayMillis)
-          val evicted =
-            synchronized(sessionRegistryLock) {
-              evictExpiredSessionsLocked(System.currentTimeMillis())
-            }
-          evicted.forEach { closeSession(it.session) }
+          synchronized(sessionRegistryLock) {
+            evictExpiredSessionsLocked(System.currentTimeMillis())
+          }
         }
       }
   }
 
   fun stop(reason: String) {
-    val sessionsToClose =
-      synchronized(sessionRegistryLock) {
-        activeResponses.values.distinctBy { it.session }.toList().also {
-          activeResponses.clear()
-        }
-      }
-    for (sessionState in sessionsToClose) {
-      closeSession(sessionState.session)
-    }
+    synchronized(sessionRegistryLock) { activeResponses.clear() }
     try {
       serverSocket?.close()
     } catch (_: Exception) {
@@ -282,12 +284,26 @@ class OpenAiHttpServer(
               gson.fromJson(request.body.toString(StandardCharsets.UTF_8), OpenAiResponsesRequest::class.java)
             handleResponses(client, payload)
           }
+          request.method == "POST" && request.path == "/v1/audio/transcriptions" -> {
+            val payload =
+              gson.fromJson(
+                request.body.toString(StandardCharsets.UTF_8),
+                OpenAiAudioTranscriptionRequest::class.java,
+              )
+            handleAudioTranscription(client, payload)
+          }
           request.method == "GET" && request.path == "/health" -> {
             writeJsonResponse(
               client,
               200,
               "OK",
-              jsonObjectOf("status" to "ok", "model" to (servedModelName ?: "")),
+              jsonObjectOf(
+                "status" to "ok",
+                "model" to (servedModelName ?: ""),
+                "stateful_http_responses" to isStatefulResponsesEnabled(),
+                "max_cached_http_sessions" to maxCachedHttpSessions(),
+                "http_session_idle_timeout_millis" to sessionIdleTimeoutMillis(),
+              ),
             )
           }
           else -> {
@@ -302,6 +318,65 @@ class OpenAiHttpServer(
       } catch (e: Exception) {
         onError("Client handling failed: ${e.message ?: e::class.java.simpleName}")
       }
+    }
+  }
+
+  private suspend fun handleAudioTranscription(
+    socket: Socket,
+    request: OpenAiAudioTranscriptionRequest,
+  ) {
+    val conversation = audioTranscriptionConversationFactory?.invoke(request.toConversationConfig())
+    if (conversation == null) {
+      writeJsonResponse(
+        socket,
+        503,
+        "Service Unavailable",
+        jsonObjectOf("error" to jsonObjectOf("message" to "Model is not initialized")),
+      )
+      return
+    }
+
+    val audioBase64 = request.audio_base64?.takeIf { it.isNotBlank() }
+    if (audioBase64 == null) {
+      writeJsonResponse(
+        socket,
+        400,
+        "Bad Request",
+        jsonObjectOf("error" to jsonObjectOf("message" to "Missing audio_base64")),
+      )
+      return
+    }
+
+    val prompt = request.prompt?.trim().orEmpty()
+    try {
+      conversation.use {
+        val contents =
+          if (prompt.isNotEmpty()) {
+            Contents.of(
+              Content.Text(prompt),
+              Content.AudioBytes(Base64.getDecoder().decode(audioBase64)),
+            )
+          } else {
+            Contents.of(Content.AudioBytes(Base64.getDecoder().decode(audioBase64)))
+          }
+        val transcript = conversation.sendMessage(contents).toString()
+        writeJsonResponse(
+          socket,
+          200,
+          "OK",
+          jsonObjectOf(
+            "text" to transcript,
+            "prompt" to prompt,
+          ),
+        )
+      }
+    } catch (e: IllegalArgumentException) {
+      writeJsonResponse(
+        socket,
+        400,
+        "Bad Request",
+        jsonObjectOf("error" to jsonObjectOf("message" to "Invalid audio_base64: ${e.message}")),
+      )
     }
   }
 
@@ -369,6 +444,7 @@ class OpenAiHttpServer(
       return
     }
 
+    val statefulResponsesEnabled = isStatefulResponsesEnabled()
     if (request.previous_response_id != null && !statefulResponsesEnabled) {
       writeJsonResponse(
         socket,
@@ -392,115 +468,102 @@ class OpenAiHttpServer(
           activeResponses[previousId]
         }
       }
-    if (
-      request.previous_response_id != null &&
-        existingSessionState != null &&
-        !existingSessionState.session.isAlive
-    ) {
-      synchronized(sessionRegistryLock) { activeResponses.remove(request.previous_response_id) }
-      writeJsonResponse(
-        socket,
-        410,
-        "Gone",
-        jsonObjectOf(
-          "error" to
-            jsonObjectOf(
-              "message" to "previous_response_id ${request.previous_response_id} is no longer valid"
-            )
-        ),
-      )
-      return
-    }
 
     val sessionState =
       if (request.previous_response_id != null) {
-        existingSessionState
-          ?: run {
-            writeJsonResponse(
-              socket,
-              404,
-              "Not Found",
-              jsonObjectOf(
-                "error" to
-                  jsonObjectOf(
-                    "message" to "Unknown previous_response_id ${request.previous_response_id}"
-                  )
-              ),
-            )
-            return
-          }
+        val parentSessionState =
+          existingSessionState
+            ?: run {
+              writeJsonResponse(
+                socket,
+                404,
+                "Not Found",
+                jsonObjectOf(
+                  "error" to
+                    jsonObjectOf(
+                      "message" to "Unknown previous_response_id ${request.previous_response_id}"
+                    )
+                ),
+              )
+              return
+            }
+        parentSessionState.copy(lastAccessMillis = now)
       } else {
-        responsesSessionFactory?.invoke(request)?.let {
-          HttpSessionState(
-            modelName = modelName(request.model),
-            session = it,
-            lastAccessMillis = now,
+        HttpSessionState(
+          modelName = modelName(request.model),
+          conversationConfig = request.toConversationConfig(),
+          history = emptyList(),
+          lastAccessMillis = now,
+        )
+      }
+
+    val responseId = "resp-${UUID.randomUUID()}"
+    val responseText =
+      try {
+        if (request.stream) {
+          val responseBuffer = StringBuilder()
+          streamResponse(
+            socket,
+            sessionState,
+            request,
+            prompt,
+            responseId,
+            sessionState.modelName,
+            responseBuffer,
           )
+          responseBuffer.toString()
+        } else {
+          runStatefulResponse(sessionState, request, prompt)
         }
-      } ?: run {
+      } catch (e: IllegalArgumentException) {
         writeJsonResponse(
           socket,
-          503,
-          "Service Unavailable",
-          jsonObjectOf("error" to jsonObjectOf("message" to "Model is not initialized")),
+          400,
+          "Bad Request",
+          jsonObjectOf("error" to jsonObjectOf("message" to "Invalid audio_base64: ${e.message}")),
         )
         return
       }
 
-    val requestedModelName = sessionState.modelName
-    val responseId = "resp-${UUID.randomUUID()}"
-    val evictedSessions =
+    val committedSessionState =
+      sessionState.copy(
+        lastAccessMillis = System.currentTimeMillis(),
+        history =
+          sessionState.history +
+            Message.user(buildResponseContents(request, prompt)) +
+            Message.model(responseText),
+      )
+    if (statefulResponsesEnabled) {
       synchronized(sessionRegistryLock) {
-        if (statefulResponsesEnabled) {
-          if (request.previous_response_id != null) {
-            activeResponses.remove(request.previous_response_id)
-          }
-          sessionState.lastAccessMillis = now
-          activeResponses[responseId] = sessionState
-          evictSessionsLocked(now)
-        } else {
-          emptyList()
-        }
+        activeResponses[responseId] = committedSessionState
+        evictSessionsLocked(System.currentTimeMillis())
       }
-    evictedSessions.forEach { closeSession(it.session) }
-
-    try {
-      if (request.stream) {
-        streamResponse(socket, sessionState, prompt, responseId, requestedModelName)
-      } else {
-        val textOutput =
-          sessionState.mutex.withLock {
-            sessionState.lastAccessMillis = System.currentTimeMillis()
-            sessionState.session.generateContent(listOf(InputData.Text(prompt)))
-          }
-        val response =
-          OpenAiResponse(
-            id = responseId,
-            output =
-              listOf(
-                OpenAiResponseOutput(
-                  id = "msg-${UUID.randomUUID()}",
-                  type = "message",
-                  role = "assistant",
-                  status = "completed",
-                  content =
-                    listOf(
-                      OpenAiResponseOutputContent(
-                        type = "output_text",
-                        text = textOutput,
-                      )
-                    ),
-                )
-              ),
-          )
-        writeJsonResponse(socket, 200, "OK", response)
-      }
-    } finally {
-      if (statefulResponsesEnabled) {
-        sessionState.lastAccessMillis = System.currentTimeMillis()
-      } else {
-        closeSession(sessionState.session)
-      }
+    }
+    if (!request.stream) {
+      writeJsonResponse(
+        socket,
+        200,
+        "OK",
+        OpenAiResponse(
+          id = responseId,
+          output =
+            listOf(
+              OpenAiResponseOutput(
+                id = "msg-${UUID.randomUUID()}",
+                type = "message",
+                role = "assistant",
+                status = "completed",
+                content =
+                  listOf(
+                    OpenAiResponseOutputContent(
+                      type = "output_text",
+                      text = responseText,
+                    )
+                  ),
+              )
+            ),
+        ),
+      )
     }
   }
 
@@ -527,8 +590,8 @@ class OpenAiHttpServer(
       session.generateContentStream(
         listOf(InputData.Text(promptMessage.extractText())),
         object : ResponseCallback {
-          override fun onNext(text: String) {
-            if (text.isNotEmpty()) {
+          override fun onNext(response: String) {
+            if (response.isNotEmpty()) {
               writeSseEvent(
                 writer,
                 OpenAiChatCompletionChunk(
@@ -538,7 +601,7 @@ class OpenAiHttpServer(
                   choices =
                     listOf(
                       OpenAiChatChoice(
-                        delta = OpenAiChatCompletionMessage(content = text),
+                        delta = OpenAiChatCompletionMessage(content = response),
                       )
                     ),
                 ),
@@ -607,9 +670,11 @@ class OpenAiHttpServer(
   private suspend fun streamResponse(
     socket: Socket,
     sessionState: HttpSessionState,
+    request: OpenAiResponsesRequest,
     prompt: String,
     responseId: String,
     modelName: String,
+    responseBuffer: StringBuilder,
   ) {
     val outputStream = BufferedOutputStream(socket.getOutputStream())
     val writer = OutputStreamWriter(outputStream, StandardCharsets.UTF_8)
@@ -632,44 +697,53 @@ class OpenAiHttpServer(
     sessionState.mutex.withLock {
       try {
         sessionState.lastAccessMillis = System.currentTimeMillis()
-        sessionState.session.generateContentStream(
-          listOf(InputData.Text(prompt)),
-          object : ResponseCallback {
-            override fun onNext(text: String) {
-              if (text.isNotEmpty()) {
+        val conversation =
+          responsesConversationFactory?.invoke(
+            sessionState.conversationConfig.copy(initialMessages = sessionState.history),
+          )
+            ?: throw IllegalStateException("Model is not initialized")
+        conversation.use {
+          conversation.sendMessageAsync(
+            buildResponseContents(request, prompt),
+            object : MessageCallback {
+              override fun onMessage(message: Message) {
+                val text = message.toString()
+                if (text.isNotEmpty()) {
+                  responseBuffer.append(text)
+                  writer.write(
+                    "event: response.output_text.delta\n" +
+                      "data: ${gson.toJson(jsonObjectOf("delta" to jsonObjectOf("text" to text)))}\n\n"
+                  )
+                  writer.flush()
+                }
+              }
+
+              override fun onDone() {
                 writer.write(
-                  "event: response.output_text.delta\n" +
-                    "data: ${gson.toJson(jsonObjectOf("delta" to jsonObjectOf("text" to text)))}\n\n"
+                  "event: response.completed\n" +
+                    "data: ${gson.toJson(jsonObjectOf("id" to responseId, "status" to "completed"))}\n\n"
                 )
+                writer.write("data: [DONE]\n\n")
                 writer.flush()
+                if (!completed.isCompleted) {
+                  completed.complete(Unit)
+                }
               }
-            }
 
-            override fun onDone() {
-              writer.write(
-                "event: response.completed\n" +
-                  "data: ${gson.toJson(jsonObjectOf("id" to responseId, "status" to "completed"))}\n\n"
-              )
-              writer.write("data: [DONE]\n\n")
-              writer.flush()
-              if (!completed.isCompleted) {
-                completed.complete(Unit)
+              override fun onError(throwable: Throwable) {
+                writer.write(
+                  "event: response.error\n" +
+                    "data: ${gson.toJson(jsonObjectOf("error" to (throwable.message ?: throwable::class.java.simpleName)))}\n\n"
+                )
+                writer.write("data: [DONE]\n\n")
+                writer.flush()
+                if (!completed.isCompleted) {
+                  completed.complete(Unit)
+                }
               }
-            }
-
-            override fun onError(throwable: Throwable) {
-              writer.write(
-                "event: response.error\n" +
-                  "data: ${gson.toJson(jsonObjectOf("error" to (throwable.message ?: throwable::class.java.simpleName)))}\n\n"
-              )
-              writer.write("data: [DONE]\n\n")
-              writer.flush()
-              if (!completed.isCompleted) {
-                completed.complete(Unit)
-              }
-            }
-          },
-        )
+            },
+          )
+        }
         completed.await()
       } finally {
         if (!completed.isCompleted) {
@@ -690,7 +764,7 @@ class OpenAiHttpServer(
   private fun evictSessionsLocked(nowMillis: Long): List<HttpSessionState> {
     val evicted = mutableListOf<HttpSessionState>()
     evicted.addAll(evictExpiredSessionsLocked(nowMillis))
-    while (activeResponses.size > maxCachedHttpSessions) {
+    while (activeResponses.size > maxCachedHttpSessions()) {
       val oldestEntry = activeResponses.entries.iterator().next()
       activeResponses.remove(oldestEntry.key)
       evicted.add(oldestEntry.value)
@@ -699,12 +773,16 @@ class OpenAiHttpServer(
   }
 
   private fun evictExpiredSessionsLocked(nowMillis: Long): List<HttpSessionState> {
-    if (!statefulResponsesEnabled || sessionIdleTimeoutMillis <= 0L) {
+    if (!isStatefulResponsesEnabled()) {
+      return emptyList()
+    }
+    val idleTimeoutMillis = sessionIdleTimeoutMillis()
+    if (idleTimeoutMillis <= 0L) {
       return emptyList()
     }
     val expiredKeys =
       activeResponses.entries
-        .filter { nowMillis - it.value.lastAccessMillis >= sessionIdleTimeoutMillis }
+        .filter { nowMillis - it.value.lastAccessMillis >= idleTimeoutMillis }
         .map { it.key }
     if (expiredKeys.isEmpty()) {
       return emptyList()
@@ -713,6 +791,41 @@ class OpenAiHttpServer(
   }
 
   private fun modelName(requestModel: String?): String = requestModel?.takeIf { it.isNotBlank() } ?: currentModelNameProvider().orEmpty()
+
+  private fun isStatefulResponsesEnabled(): Boolean = statefulResponsesEnabledProvider()
+
+  private fun maxCachedHttpSessions(): Int = maxCachedHttpSessionsProvider().coerceAtLeast(1)
+
+  private fun sessionIdleTimeoutMillis(): Long = sessionIdleTimeoutMillisProvider().coerceAtLeast(0L)
+
+  private fun OpenAiResponsesRequest.toConversationConfig(): ConversationConfig =
+    ConversationConfig(
+      samplerConfig =
+        when {
+          top_k != null || top_p != null || temperature != null ->
+            SamplerConfig(
+              topK = top_k ?: 40,
+              topP = top_p ?: 0.95,
+              temperature = temperature ?: 0.7,
+            )
+          else -> null
+        },
+    )
+
+  private fun OpenAiAudioTranscriptionRequest.toConversationConfig(): ConversationConfig =
+    ConversationConfig()
+
+  private fun buildResponseContents(request: OpenAiResponsesRequest, prompt: String): Contents {
+    val contents = mutableListOf<Content>()
+    if (prompt.isNotBlank()) {
+      contents.add(Content.Text(prompt))
+    }
+    val audioBase64 = request.audio_base64?.takeIf { it.isNotBlank() }
+    if (audioBase64 != null) {
+      contents.add(Content.AudioBytes(Base64.getDecoder().decode(audioBase64)))
+    }
+    return Contents.of(contents)
+  }
 
   private fun readRequest(socket: Socket): HttpRequest? {
     val input = BufferedInputStream(socket.getInputStream())
@@ -819,6 +932,20 @@ class OpenAiHttpServer(
       return messagesFromRequest.last().extractText()
     }
     return ""
+  }
+
+  private suspend fun runStatefulResponse(
+    sessionState: HttpSessionState,
+    request: OpenAiResponsesRequest,
+    prompt: String,
+  ): String {
+    val conversation =
+      responsesConversationFactory?.invoke(
+        sessionState.conversationConfig.copy(initialMessages = sessionState.history),
+      ) ?: throw IllegalStateException("Model is not initialized")
+    conversation.use {
+      return conversation.sendMessage(buildResponseContents(request, prompt)).toString()
+    }
   }
 
   private fun BufferedInputStream.readHttpLine(): String? {

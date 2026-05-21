@@ -43,15 +43,21 @@ import com.google.ai.edge.litertlm.OpenAiChatMessage
 import com.google.ai.edge.litertlm.OpenAiChatRequest
 import com.google.ai.edge.litertlm.OpenAiHttpServer
 import com.google.ai.edge.litertlm.OpenAiModelInfo
-import com.google.ai.edge.litertlm.OpenAiResponsesRequest
+import com.google.ai.edge.litertlm.Conversation
+import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.SamplerConfig
 import com.google.ai.edge.litertlm.Session
 import com.google.ai.edge.litertlm.SessionConfig
+import java.net.HttpURLConnection
+import java.net.URL
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 private const val TAG = "AGPhoneOpenAiServer"
@@ -61,8 +67,10 @@ private const val NOTIFICATION_ID = 0x5A17
 class PhoneOpenAiServerService : Service() {
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
   private var server: OpenAiHttpServer? = null
+  private var healthPollJob: Job? = null
   private var notificationHost: String = ""
   private var notificationPort: Int = 0
+  private var notificationModelName: String = ""
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -78,8 +86,36 @@ class PhoneOpenAiServerService : Service() {
         return START_NOT_STICKY
       }
       else -> {
+        val desiredModel = resolveModelToServe()
+        val desiredBindAddress = resolveBindAddress(PhoneOpenAiServerStore.state.value.preferredBindAddress)
+        val desiredHost = desiredBindAddress?.hostAddress.orEmpty()
+        val desiredPort = PhoneOpenAiServerStore.state.value.port
+        val desiredModelName = desiredModel?.name.orEmpty()
+        val needsRestart =
+          server != null &&
+            (notificationHost != desiredHost ||
+              notificationPort != desiredPort ||
+              notificationModelName != desiredModelName)
+
         if (server == null) {
+          startForeground(
+            NOTIFICATION_ID,
+            buildNotification(
+              title = "LiteRT-LM server starting",
+              content = "Preparing the selected model…",
+            ),
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+              ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            } else {
+              0
+            },
+          )
           scope.launch { startServer() }
+        } else if (needsRestart) {
+          scope.launch {
+            stopServer("Restarting with updated settings", stopServiceSelf = false)
+            startServer()
+          }
         }
       }
     }
@@ -106,15 +142,23 @@ class PhoneOpenAiServerService : Service() {
       return
     }
 
-    val bindAddress = resolveBindAddress(PhoneOpenAiServerStore.state.value.preferredBindAddress)
+    val preferredBindAddress = PhoneOpenAiServerStore.state.value.preferredBindAddress.trim()
+    val bindAddress = resolveBindAddress(preferredBindAddress)
     if (bindAddress == null) {
-      PhoneOpenAiServerStore.setError("No LAN address found. Connect to Wi-Fi and try again.")
+      val errorMessage =
+        if (preferredBindAddress.isNotEmpty()) {
+          "Selected interface $preferredBindAddress is unavailable. Choose another interface."
+        } else {
+          "No LAN address found. Connect to Wi-Fi and try again."
+        }
+      PhoneOpenAiServerStore.setError(errorMessage)
       stopSelf()
       return
     }
 
     notificationHost = bindAddress.hostAddress ?: ""
     notificationPort = PhoneOpenAiServerStore.state.value.port
+    notificationModelName = model.name
     PhoneOpenAiServerStore.setRunning(
       host = notificationHost,
       port = notificationPort,
@@ -132,11 +176,17 @@ class PhoneOpenAiServerService : Service() {
         },
         currentModelNameProvider = { PhoneOpenAiServerStore.currentModel?.name ?: model.name },
         chatSessionFactory = { request -> createHttpSession(request.model, request) },
-        responsesSessionFactory = { request -> createHttpSession(request.model, request) },
-        statefulResponsesEnabled = PhoneOpenAiServerStore.state.value.statefulHttpResponses,
-        maxCachedHttpSessions = PhoneOpenAiServerStore.state.value.maxCachedHttpSessions,
-        sessionIdleTimeoutMillis =
-          PhoneOpenAiServerStore.state.value.httpSessionIdleTimeoutMinutes * 60_000L,
+        responsesConversationFactory = { config -> createHttpConversation(config) },
+        audioTranscriptionConversationFactory = { config -> createHttpConversation(config) },
+        statefulResponsesEnabledProvider = {
+          PhoneOpenAiServerStore.state.value.statefulHttpResponses
+        },
+        maxCachedHttpSessionsProvider = {
+          PhoneOpenAiServerStore.state.value.maxCachedHttpSessions
+        },
+        sessionIdleTimeoutMillisProvider = {
+          PhoneOpenAiServerStore.state.value.httpSessionIdleTimeoutMinutes * 60_000L
+        },
         authTokenProvider = { null },
         lanAuthBypassProvider = { hostAddress ->
           PhoneOpenAiServerStore.allowLanNoAuth &&
@@ -150,6 +200,7 @@ class PhoneOpenAiServerService : Service() {
     } catch (e: Exception) {
       Log.e(TAG, "Failed to bind server socket", e)
       PhoneOpenAiServerStore.setError(e.message ?: "Failed to bind server socket")
+      PhoneOpenAiServerStore.setLiveHttpSessionHealth(null, error = e.message)
       server = null
       stopSelf()
       return
@@ -168,21 +219,85 @@ class PhoneOpenAiServerService : Service() {
       },
     )
     Log.i(TAG, "Server started at http://${notificationHost}:${notificationPort}/v1")
+    startHealthPolling(notificationHost, notificationPort)
   }
 
   private fun stopServer(reason: String) {
+    stopServer(reason, stopServiceSelf = true)
+  }
+
+  private fun stopServer(reason: String, stopServiceSelf: Boolean) {
     Log.i(TAG, reason)
     try {
       server?.close()
     } catch (_: Exception) {
     }
+    healthPollJob?.cancel()
+    healthPollJob = null
     server = null
+    notificationModelName = ""
     PhoneOpenAiServerStore.stop()
     stopForeground(STOP_FOREGROUND_REMOVE)
-    stopSelf()
+    if (stopServiceSelf) {
+      stopSelf()
+    }
   }
 
-  private fun createHttpSession(requestModelName: String?, request: OpenAiChatRequest): Session? {
+  private fun startHealthPolling(host: String, port: Int) {
+    healthPollJob?.cancel()
+    healthPollJob =
+      scope.launch {
+        val url = URL("http://$host:$port/health")
+        while (isActive) {
+          try {
+            val connection = url.openConnection() as HttpURLConnection
+            connection.requestMethod = "GET"
+            connection.connectTimeout = 1_500
+            connection.readTimeout = 1_500
+            connection.useCaches = false
+            connection.doInput = true
+            val responseCode = connection.responseCode
+            val body =
+              (if (responseCode in 200..399) connection.inputStream else connection.errorStream)
+                ?.bufferedReader()
+                ?.use { it.readText() }
+                .orEmpty()
+            connection.disconnect()
+
+            if (responseCode != 200) {
+              PhoneOpenAiServerStore.setLiveHttpSessionHealth(
+                null,
+                error = "health returned HTTP $responseCode: ${body.take(120)}",
+              )
+            } else {
+              val statefulHttpResponses =
+                Regex("\"stateful_http_responses\"\\s*:\\s*(true|false)")
+                  .find(body)
+                  ?.groupValues
+                  ?.getOrNull(1)
+                  ?.toBooleanStrictOrNull()
+              PhoneOpenAiServerStore.setLiveHttpSessionHealth(
+                statefulHttpResponses,
+                error =
+                  if (statefulHttpResponses == null) {
+                    "health response missing stateful_http_responses"
+                  } else {
+                    null
+                  },
+              )
+            }
+          } catch (e: Exception) {
+            PhoneOpenAiServerStore.setLiveHttpSessionHealth(null, error = e.message)
+          }
+          delay(2_000)
+        }
+      }
+  }
+
+  private fun createHttpSession(
+    requestModelName: String?,
+    request: OpenAiChatRequest,
+  ): Session? {
     val activeModel =
       if (requestModelName.isNullOrBlank()) {
         resolveModelToServe()
@@ -201,24 +316,16 @@ class PhoneOpenAiServerService : Service() {
     }
   }
 
-  private fun createHttpSession(
-    requestModelName: String?,
-    request: OpenAiResponsesRequest,
-  ): Session? {
-    val activeModel =
-      if (requestModelName.isNullOrBlank()) {
-        resolveModelToServe()
-      } else {
-        resolveModelForRequest(requestModelName)
-      }
+  private fun createHttpConversation(conversationConfig: ConversationConfig): Conversation? {
+    val activeModel = resolveModelToServe()
     val activeInstance = activeModel?.instance as? LlmModelInstance
     if (activeModel == null || activeInstance == null) {
       return null
     }
     return try {
-      activeInstance.engine.createSession(request.toSessionConfig(activeModel))
+      activeInstance.engine.createConversation(conversationConfig)
     } catch (e: Exception) {
-      Log.e(TAG, "Failed to create HTTP session for '${activeModel.name}'", e)
+      Log.e(TAG, "Failed to create HTTP responses conversation for '${activeModel.name}'", e)
       null
     }
   }
@@ -339,28 +446,23 @@ class PhoneOpenAiServerService : Service() {
   }
 
   private fun OpenAiChatRequest.toSessionConfig(model: Model): SessionConfig =
-    buildSessionConfig(model, top_k, top_p, temperature)
+    SessionConfig(buildSamplerConfig(model, top_k, top_p, temperature))
 
-  private fun OpenAiResponsesRequest.toSessionConfig(model: Model): SessionConfig =
-    buildSessionConfig(model, top_k, top_p, temperature)
-
-  private fun buildSessionConfig(
+  private fun buildSamplerConfig(
     model: Model,
     topK: Int?,
     topP: Double?,
     temperature: Double?,
-  ): SessionConfig {
+  ): SamplerConfig {
     val resolvedTopK = topK ?: model.getIntConfigValue(key = ConfigKeys.TOPK, defaultValue = DEFAULT_TOPK)
     val resolvedTopP = topP ?: model.getFloatConfigValue(key = ConfigKeys.TOPP, defaultValue = DEFAULT_TOPP).toDouble()
     val resolvedTemperature =
       temperature
         ?: model.getFloatConfigValue(key = ConfigKeys.TEMPERATURE, defaultValue = DEFAULT_TEMPERATURE).toDouble()
-    return SessionConfig(
-      SamplerConfig(
-        topK = resolvedTopK,
-        topP = resolvedTopP,
-        temperature = resolvedTemperature,
-      )
+    return SamplerConfig(
+      topK = resolvedTopK,
+      topP = resolvedTopP,
+      temperature = resolvedTemperature,
     )
   }
 

@@ -86,6 +86,13 @@ fun PhoneOpenAiServerScreen(
   }
   val isRunning = serverState.status == PhoneOpenAiServerStatus.RUNNING
   val isStarting = serverState.status == PhoneOpenAiServerStatus.STARTING
+  val liveStatefulHttpResponses = serverState.liveStatefulHttpResponses
+  val effectiveStatefulHttpResponses =
+    if (isRunning && liveStatefulHttpResponses != null) {
+      liveStatefulHttpResponses
+    } else {
+      serverState.statefulHttpResponses
+    }
   val statusText =
     when (serverState.status) {
       PhoneOpenAiServerStatus.RUNNING -> stringResource(R.string.phone_server_status_running)
@@ -336,12 +343,28 @@ fun PhoneOpenAiServerScreen(
               )
             }
             Switch(
-              checked = serverState.statefulHttpResponses,
+              checked = effectiveStatefulHttpResponses,
               onCheckedChange = { checked ->
                 modelManagerViewModel.setPhoneServerStatefulHttpResponses(checked)
               },
             )
           }
+          Text(
+            text =
+              when {
+                !isRunning -> stringResource(R.string.phone_server_stateful_http_responses_hint)
+                liveStatefulHttpResponses == true -> stringResource(R.string.phone_server_stateful_http_responses_operational_on)
+                liveStatefulHttpResponses == false -> stringResource(R.string.phone_server_stateful_http_responses_operational_off)
+                else -> stringResource(R.string.phone_server_stateful_http_responses_operational_unknown)
+              },
+            style = MaterialTheme.typography.bodySmall,
+            color =
+              when (liveStatefulHttpResponses) {
+                true -> MaterialTheme.colorScheme.primary
+                false -> MaterialTheme.colorScheme.error
+                null -> MaterialTheme.colorScheme.onSurfaceVariant
+              },
+          )
 
           Row(
             modifier = Modifier.fillMaxWidth(),

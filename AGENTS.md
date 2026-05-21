@@ -1,16 +1,23 @@
 # Gallery repo notes
 
-## Repo boundary
-- This repo owns the Android Gallery app, including the phone-hosted HTTP server UI and `OpenAiHttpServer.kt`.
-- The HTTP server code should live here only. Do not recreate a second copy in `~/src/LiteRT-LM`.
-- `~/src/LiteRT-LM` owns the runtime / engine / session implementation only.
+## Repo split
+- Gallery owns Android app, HTTP server UI, and `OpenAiHttpServer.kt`.
+- LiteRT-LM owns runtime, engine, session, model execution.
+- Do not copy HTTP server code into LiteRT-LM.
 
-## LiteRT-LM dependency
-- Gallery consumes LiteRT-LM as an artifact, not by compiling directly against the source tree.
-- If LiteRT-LM runtime changes are needed on the phone, rebuild and publish/install the artifact that Gallery resolves.
-- If the phone still shows old behavior, check which LiteRT-LM artifact is actually being consumed before changing Gallery code again.
+## LiteRT-LM on phone
+- Gallery uses LiteRT-LM as artifact, not source tree.
+- Use Android AAR / Android arm64 output, not host JVM jar.
+- Local phone build needs both:
+  - `bazel-bin/kotlin/java/com/google/ai/edge/litertlm/litertlm-jvm.jar`
+  - `bazel-bin/kotlin/java/com/google/ai/edge/litertlm/jni/liblitertlm_jni.so`
+- If phone shows old behavior, check which LiteRT-LM artifact Gallery really got.
+- For phone rebuild/install, use `scripts/build_and_install_phone.sh`.
 
-## Practical rule
-- Runtime fixes go in LiteRT-LM.
-- HTTP server UI/menus and request handling go in Gallery.
-- Do not keep duplicate HTTP server implementations in both repos.
+## Rules
+- Runtime fix -> LiteRT-LM.
+- App UI / HTTP handling -> Gallery.
+- No duplicate HTTP server copies.
+- Do not assume user wants less feature just because it is annoying.
+- If you find bad assumption or build trap, update AGENTS.md right away.
+- Write notes short. Caveman short.

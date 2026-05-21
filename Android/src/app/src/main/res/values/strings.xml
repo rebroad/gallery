@@ -127,6 +127,9 @@
   <string name="phone_server_advanced_settings_label" translatable="false">Advanced settings</string>
   <string name="phone_server_stateful_http_responses_label" translatable="false">Stateful HTTP responses</string>
   <string name="phone_server_stateful_http_responses_hint" translatable="false">Remember HTTP responses so previous_response_id can resume a conversation.</string>
+  <string name="phone_server_stateful_http_responses_operational_on" translatable="false">Live status: operational</string>
+  <string name="phone_server_stateful_http_responses_operational_off" translatable="false">Live status: not operational</string>
+  <string name="phone_server_stateful_http_responses_operational_unknown" translatable="false">Live status: checking…</string>
   <string name="phone_server_max_cached_http_sessions_label" translatable="false">Max cached HTTP sessions</string>
   <string name="phone_server_max_cached_http_sessions_hint" translatable="false">Limit how many HTTP sessions stay warm in memory.</string>
   <string name="phone_server_http_session_idle_timeout_label" translatable="false">HTTP session idle timeout (minutes)</string>

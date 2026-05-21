@@ -222,7 +222,18 @@ fun HomeScreen(
 
   // Show home screen content when TOS has been accepted.
     if (!showTosDialog) {
-    LaunchedEffect(serverState.autoStartOnAppLaunch, selectedModel.name, selectedModel.instance) {
+    LaunchedEffect(
+      serverState.autoStartOnAppLaunch,
+      serverState.preferredBindAddress,
+      serverState.port,
+      serverState.status,
+      serverState.host,
+      selectedModel.name,
+      selectedModel.instance,
+    ) {
+      val preferredBindAddress = serverState.preferredBindAddress.trim()
+      val runningOnRequestedBind =
+        preferredBindAddress.isBlank() || serverState.host == preferredBindAddress
       if (
         !didAutoStartServer &&
         serverState.autoStartOnAppLaunch &&
@@ -231,6 +242,21 @@ fun HomeScreen(
         uiState.modelDownloadStatus[selectedModel.name]?.status == ModelDownloadStatusType.SUCCEEDED
       ) {
         didAutoStartServer = true
+        PhoneOpenAiServerManager.start(
+          context = context,
+          model = selectedModel,
+          availableModels = modelManagerViewModel.getAllDownloadedModels(),
+          serverToken = serverState.token.takeIf { it.isNotBlank() },
+          allowLanNoAuth = serverState.allowLanNoAuth,
+          noAuthSubnetCidr = serverState.noAuthSubnetCidr,
+        )
+      } else if (
+        serverState.autoStartOnAppLaunch &&
+        serverState.status == PhoneOpenAiServerStatus.RUNNING &&
+        selectedModel.runtimeType == RuntimeType.LITERT_LM &&
+        uiState.modelDownloadStatus[selectedModel.name]?.status == ModelDownloadStatusType.SUCCEEDED &&
+        !runningOnRequestedBind
+      ) {
         PhoneOpenAiServerManager.start(
           context = context,
           model = selectedModel,
