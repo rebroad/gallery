@@ -320,36 +320,6 @@ fun PhoneOpenAiServerScreen(
         }
       }
 
-      Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        modifier = Modifier.fillMaxWidth(),
-      ) {
-        Column(
-          modifier = Modifier.fillMaxWidth().padding(12.dp),
-          verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-          Text(
-            text = stringResource(R.string.phone_server_endpoint_label),
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-          )
-          Text(
-            text =
-              if (serverState.status == PhoneOpenAiServerStatus.RUNNING) {
-                "http://${serverState.host}:${serverState.port}/v1"
-              } else {
-                stringResource(R.string.phone_server_listen_hint)
-              },
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-          )
-          Text(
-            text = stringResource(R.string.phone_server_subtitle),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-          )
-        }
-      }
     }
   }
 }
