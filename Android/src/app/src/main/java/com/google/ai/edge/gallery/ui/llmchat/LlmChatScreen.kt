@@ -87,7 +87,7 @@ fun LlmChatScreen(
   autoStartServer: Boolean = false,
   serverToken: String? = null,
   allowLanNoAuth: Boolean = false,
-  lanNoAuthSubnetCidr: String = "192.168.192.0/24",
+  lanNoAuthSubnetCidr: String = "",
 ) {
   ChatViewWrapper(
     viewModel = viewModel,
@@ -237,7 +237,7 @@ fun ChatViewWrapper(
   autoStartServer: Boolean = false,
   serverToken: String? = null,
   allowLanNoAuth: Boolean = false,
-  lanNoAuthSubnetCidr: String = "192.168.192.0/24",
+  lanNoAuthSubnetCidr: String = "",
 ) {
   val context = LocalContext.current
   val task = modelManagerViewModel.getTaskById(id = taskId)!!

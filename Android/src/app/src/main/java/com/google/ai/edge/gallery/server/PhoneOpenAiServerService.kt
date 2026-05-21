@@ -62,7 +62,6 @@ private const val NOTIFICATION_ID = 0x5A17
 class PhoneOpenAiServerService : Service() {
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
   private var server: OpenAiHttpServer? = null
-  private var notificationToken: String = ""
   private var notificationHost: String = ""
   private var notificationPort: Int = 0
 
@@ -115,13 +114,12 @@ class PhoneOpenAiServerService : Service() {
       return
     }
 
-    notificationToken = PhoneOpenAiServerStore.ensureToken()
     notificationHost = bindAddress.hostAddress ?: ""
     notificationPort = PhoneOpenAiServerStore.state.value.port
     PhoneOpenAiServerStore.setRunning(
       host = notificationHost,
       port = notificationPort,
-      token = notificationToken,
+      token = "",
       modelName = model.name,
     )
 
@@ -134,8 +132,10 @@ class PhoneOpenAiServerService : Service() {
             .map { OpenAiModelInfo(id = it.name, owned_by = "gallery") }
         },
         currentModelNameProvider = { PhoneOpenAiServerStore.currentModel?.name ?: model.name },
-        chatConversationFactory = { request -> buildConversation(request) },
-        authTokenProvider = { PhoneOpenAiServerStore.state.value.token },
+        chatConversationFactory = { _ -> null },
+        sharedChatConversationFactory = { request -> resolveSharedConversation(request.model) },
+        sharedResponsesConversationFactory = { request -> resolveSharedConversation(request.model) },
+        authTokenProvider = { null },
         lanAuthBypassProvider = { hostAddress ->
           PhoneOpenAiServerStore.allowLanNoAuth &&
             isInLanBypassSubnet(hostAddress, PhoneOpenAiServerStore.noAuthSubnetCidr)
@@ -180,72 +180,18 @@ class PhoneOpenAiServerService : Service() {
     stopSelf()
   }
 
-  private fun buildConversation(
-    request: OpenAiChatRequest,
-  ): Conversation? {
+  private fun resolveSharedConversation(requestModelName: String?): Conversation? {
     val activeModel =
-      if (request.model.isNullOrBlank()) {
+      if (requestModelName.isNullOrBlank()) {
         resolveModelToServe()
       } else {
-        resolveModelForRequest(request.model)
+        resolveModelForRequest(requestModelName)
       }
     val activeInstance = activeModel?.instance as? LlmModelInstance
     if (activeModel == null || activeInstance == null) {
       return null
     }
-
-    val promptIndex = request.messages.indexOfLast { it.role.lowercase() != "system" }
-    val historyMessages =
-      if (promptIndex <= 0) {
-        emptyList()
-      } else {
-        request.messages.take(promptIndex).filter { it.role.lowercase() != "system" }
-      }
-
-    val systemText =
-      request.messages.filter { it.role.lowercase() == "system" }.joinToString("\n\n") {
-        it.extractText()
-      }
-
-    val topK =
-      request.top_k ?: activeModel.getIntConfigValue(key = ConfigKeys.TOPK, defaultValue = DEFAULT_TOPK)
-    val topP =
-      request.top_p ?: activeModel.getFloatConfigValue(key = ConfigKeys.TOPP, defaultValue = DEFAULT_TOPP)
-    val temperature =
-      request.temperature
-        ?: activeModel.getFloatConfigValue(key = ConfigKeys.TEMPERATURE, defaultValue = DEFAULT_TEMPERATURE)
-
-    val samplerConfig =
-      SamplerConfig(
-        topK = topK,
-        topP = topP.toDouble(),
-        temperature = temperature.toDouble(),
-      )
-
-    val initialMessages =
-      historyMessages.mapNotNull {
-        when (it.role.lowercase()) {
-          "user" -> Message.user(Contents.of(it.extractText()))
-          "assistant" -> Message.model(Contents.of(it.extractText()))
-          "tool" -> Message.tool(Contents.of(it.extractText()))
-          else -> null
-        }
-      }
-
-    val systemInstruction =
-      if (systemText.isBlank()) {
-        null
-      } else {
-        Contents.of(systemText)
-      }
-
-    return activeInstance.engine.createConversation(
-      ConversationConfig(
-        systemInstruction = systemInstruction,
-        initialMessages = initialMessages,
-        samplerConfig = samplerConfig,
-      )
-    )
+    return activeInstance.conversation
   }
 
   private fun createNotificationChannel() {

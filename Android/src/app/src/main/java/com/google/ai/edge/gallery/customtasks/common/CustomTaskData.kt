@@ -52,6 +52,6 @@ data class CustomTaskDataForBuiltinTask(
   val serverToken: String? = null,
   // Allow clients from the local LAN subnet to skip bearer auth.
   val allowLanNoAuth: Boolean = false,
-  // CIDR subnet that may bypass auth when allowLanNoAuth is enabled.
-  val lanNoAuthSubnetCidr: String = "192.168.192.0/24",
+  // LAN bypass is determined by the selected server interface, so no subnet is required.
+  val lanNoAuthSubnetCidr: String = "",
 )

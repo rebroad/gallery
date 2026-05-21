@@ -148,7 +148,7 @@ fun ChatView(
   autoStartServer: Boolean = false,
   serverToken: String? = null,
   allowLanNoAuth: Boolean = false,
-  lanNoAuthSubnetCidr: String = "192.168.192.0/24",
+  lanNoAuthSubnetCidr: String = "",
 ) {
   val uiState by viewModel.uiState.collectAsState()
   val modelManagerUiState by modelManagerViewModel.uiState.collectAsState()

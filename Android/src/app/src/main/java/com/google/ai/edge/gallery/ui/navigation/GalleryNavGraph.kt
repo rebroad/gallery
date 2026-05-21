@@ -368,7 +368,7 @@ fun GalleryNavHost(
                   allowLanNoAuth =
                     allowLanNoAuthParam == "1" ||
                       allowLanNoAuthParam.equals("true", ignoreCase = true),
-                  lanNoAuthSubnetCidr = noAuthSubnetParam ?: "192.168.192.0/24",
+                  lanNoAuthSubnetCidr = noAuthSubnetParam.orEmpty(),
                 )
             )
           } else {

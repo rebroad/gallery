@@ -34,6 +34,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Scaffold
@@ -268,28 +269,31 @@ fun PhoneOpenAiServerScreen(
             modifier = Modifier.widthIn(max = 160.dp),
           )
 
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-          ) {
-            Column(modifier = Modifier.weight(1f)) {
+          ListItem(
+            headlineContent = {
               Text(
                 text = stringResource(R.string.phone_server_auto_start_label),
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
               )
+            },
+            supportingContent = {
               Text(
                 text = stringResource(R.string.phone_server_auto_start_hint),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
               )
-            }
-            Spacer(modifier = Modifier.width(12.dp))
-            Switch(
-              checked = serverState.autoStartOnAppLaunch,
-              onCheckedChange = { checked -> modelManagerViewModel.setPhoneServerAutoStart(checked) },
-            )
-          }
+            },
+            trailingContent = {
+              Switch(
+                checked = serverState.autoStartOnAppLaunch,
+                onCheckedChange = {
+                  checked -> modelManagerViewModel.setPhoneServerAutoStart(checked)
+                },
+              )
+            },
+            modifier = Modifier.fillMaxWidth(),
+          )
         }
       }
 

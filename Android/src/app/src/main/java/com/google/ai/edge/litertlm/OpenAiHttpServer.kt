@@ -141,6 +141,7 @@ class OpenAiHttpServer(
   private val availableModelsProvider: () -> List<OpenAiModelInfo>,
   private val currentModelNameProvider: () -> String?,
   private val chatConversationFactory: (OpenAiChatRequest) -> Conversation?,
+  private val sharedChatConversationFactory: ((OpenAiChatRequest) -> Conversation?)? = null,
   private val responsesConversationFactory: (OpenAiResponsesRequest) -> Conversation? = {
       request ->
     chatConversationFactory(
@@ -155,7 +156,8 @@ class OpenAiHttpServer(
       )
     )
   },
-  private val authTokenProvider: () -> String,
+  private val sharedResponsesConversationFactory: ((OpenAiResponsesRequest) -> Conversation?)? = null,
+  private val authTokenProvider: () -> String? = { null },
   private val lanAuthBypassProvider: (String?) -> Boolean = { false },
   private val onError: (String) -> Unit = {},
 ) : AutoCloseable {
@@ -168,6 +170,8 @@ class OpenAiHttpServer(
   private var acceptJob: Job? = null
   private var bindAddress: Inet4Address? = null
   private var port: Int = 0
+  private val ownsConversations: Boolean
+    get() = sharedChatConversationFactory == null && sharedResponsesConversationFactory == null
 
   val servedModelName: String?
     get() = currentModelNameProvider()
@@ -196,9 +200,11 @@ class OpenAiHttpServer(
   }
 
   fun stop(reason: String) {
-    activeConversation.getAndSet(null)?.let { closeConversation(it) }
-    for (conversation in activeResponses.values) {
-      closeConversation(conversation)
+    if (ownsConversations) {
+      activeConversation.getAndSet(null)?.let { closeConversation(it) }
+      for (conversation in activeResponses.values) {
+        closeConversation(conversation)
+      }
     }
     activeResponses.clear()
     try {
@@ -223,8 +229,9 @@ class OpenAiHttpServer(
     socket.use { client ->
       try {
         val request = readRequest(client) ?: return
+        val expectedToken = authTokenProvider()?.takeIf { it.isNotBlank() }
         val authOk =
-          request.headers["authorization"] == "Bearer ${authTokenProvider()}"
+          expectedToken == null || request.headers["authorization"] == "Bearer $expectedToken"
         val allowLanNoAuth = lanAuthBypassProvider(client.inetAddress.hostAddress)
         if (!authOk && request.path != "/health" && !allowLanNoAuth) {
           writeJsonResponse(
@@ -281,7 +288,7 @@ class OpenAiHttpServer(
   }
 
   private suspend fun handleChatCompletion(socket: Socket, request: OpenAiChatRequest) {
-    val modelConversation = chatConversationFactory(request)
+    val modelConversation = sharedChatConversationFactory?.invoke(request) ?: chatConversationFactory(request)
     if (modelConversation == null) {
       writeJsonResponse(
         socket,
@@ -346,7 +353,9 @@ class OpenAiHttpServer(
       }
     } finally {
       activeConversation.compareAndSet(conversation, null)
-      closeConversation(conversation)
+      if (ownsConversations) {
+        closeConversation(conversation)
+      }
     }
   }
 
@@ -357,6 +366,7 @@ class OpenAiHttpServer(
 
     val conversation =
       existingConversation
+        ?: sharedResponsesConversationFactory?.invoke(request)
         ?: responsesConversationFactory(request)
         ?: run {
           writeJsonResponse(
@@ -419,6 +429,9 @@ class OpenAiHttpServer(
       activeConversation.compareAndSet(conversation, null)
       if (request.previous_response_id == null) {
         activeResponses[responseId] = conversation
+      }
+      if (ownsConversations) {
+        closeConversation(conversation)
       }
     }
   }

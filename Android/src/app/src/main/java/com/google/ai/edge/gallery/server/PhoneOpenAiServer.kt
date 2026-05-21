@@ -44,8 +44,8 @@ data class PhoneOpenAiServerState(
   val preferredBindAddress: String = "",
   val token: String = "",
   val modelName: String = "",
-  val allowLanNoAuth: Boolean = false,
-  val noAuthSubnetCidr: String = "192.168.192.0/24",
+  val allowLanNoAuth: Boolean = true,
+  val noAuthSubnetCidr: String = "",
   val autoStartOnAppLaunch: Boolean = false,
   val error: String? = null,
 )
@@ -60,10 +60,10 @@ object PhoneOpenAiServerStore {
   @Volatile var availableModels: List<Model> = emptyList()
     private set
 
-  @Volatile var allowLanNoAuth: Boolean = false
+  @Volatile var allowLanNoAuth: Boolean = true
     private set
 
-  @Volatile var noAuthSubnetCidr: String = "192.168.192.0/24"
+  @Volatile var noAuthSubnetCidr: String = ""
     private set
 
   fun setCurrentModel(model: Model?) {
@@ -97,7 +97,7 @@ object PhoneOpenAiServerStore {
     }
   }
 
-  fun setLanAuthBypass(enabled: Boolean, subnetCidr: String = "192.168.192.0/24") {
+  fun setLanAuthBypass(enabled: Boolean, subnetCidr: String = "") {
     allowLanNoAuth = enabled
     noAuthSubnetCidr = subnetCidr
     _state.update { it.copy(allowLanNoAuth = enabled, noAuthSubnetCidr = subnetCidr) }
@@ -172,8 +172,8 @@ object PhoneOpenAiServerManager {
     model: Model,
     availableModels: List<Model>,
     serverToken: String? = null,
-    allowLanNoAuth: Boolean = false,
-    noAuthSubnetCidr: String = "192.168.192.0/24",
+    allowLanNoAuth: Boolean = true,
+    noAuthSubnetCidr: String = "",
   ): String? {
     val curStatus = PhoneOpenAiServerStore.state.value.status
     if (curStatus == PhoneOpenAiServerStatus.STARTING || curStatus == PhoneOpenAiServerStatus.RUNNING) {
