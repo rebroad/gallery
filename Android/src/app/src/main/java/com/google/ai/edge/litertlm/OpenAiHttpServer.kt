@@ -170,6 +170,7 @@ private const val DEFAULT_HTTP_SESSION_IDLE_TIMEOUT_MILLIS = 10 * 60 * 1000L
 class OpenAiHttpServer(
   private val availableModelsProvider: () -> List<OpenAiModelInfo>,
   private val currentModelNameProvider: () -> String?,
+  private val debugModelInfoProvider: (() -> JsonObject)? = null,
   private val chatSessionFactory: (OpenAiChatRequest) -> Session?,
   private val responsesConversationFactory: ((ConversationConfig) -> Conversation?)? = null,
   private val audioTranscriptionConversationFactory: ((ConversationConfig) -> Conversation?)? =
@@ -264,7 +265,7 @@ class OpenAiHttpServer(
         val authOk =
           expectedToken == null || request.headers["authorization"] == "Bearer $expectedToken"
         val allowLanNoAuth = lanAuthBypassProvider(client.inetAddress.hostAddress)
-        if (!authOk && request.path != "/health" && !allowLanNoAuth) {
+        if (!authOk && request.path !in setOf("/health", "/debug/model") && !allowLanNoAuth) {
           writeJsonResponse(
             client,
             401,
@@ -314,6 +315,17 @@ class OpenAiHttpServer(
                 "stateful_http_responses" to isStatefulResponsesEnabled(),
                 "max_cached_http_sessions" to maxCachedHttpSessions(),
                 "http_session_idle_timeout_millis" to sessionIdleTimeoutMillis(),
+              ),
+            )
+          }
+          request.method == "GET" && request.path == "/debug/model" -> {
+            writeJsonResponse(
+              client,
+              200,
+              "OK",
+              jsonObjectOf(
+                "status" to "ok",
+                "model" to (debugModelInfoProvider?.invoke() ?: jsonObjectOf()),
               ),
             )
           }

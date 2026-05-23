@@ -48,16 +48,12 @@ import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.SamplerConfig
 import com.google.ai.edge.litertlm.Session
 import com.google.ai.edge.litertlm.SessionConfig
-import java.net.HttpURLConnection
-import java.net.URL
+import com.google.gson.JsonObject
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 private const val TAG = "AGPhoneOpenAiServer"
@@ -67,10 +63,62 @@ private const val NOTIFICATION_ID = 0x5A17
 class PhoneOpenAiServerService : Service() {
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
   private var server: OpenAiHttpServer? = null
-  private var healthPollJob: Job? = null
   private var notificationHost: String = ""
   private var notificationPort: Int = 0
   private var notificationModelName: String = ""
+  private var servedModel: Model? = null
+
+  private fun logModelLifecycle(event: String, model: Model? = null, extra: String = "") {
+    val currentModel = model ?: servedModel
+    val modelName = currentModel?.name?.takeIf { it.isNotBlank() } ?: notificationModelName
+    val modelInstanceState =
+      when {
+        currentModel == null -> ""
+        currentModel.instance != null -> " resident=true"
+        else -> " resident=false"
+      }
+    val suffix = buildString {
+      if (modelName.isNotBlank()) {
+        append(" model=")
+        append(modelName)
+      }
+      append(modelInstanceState)
+      if (extra.isNotBlank()) {
+        append(" ")
+        append(extra)
+      }
+    }
+    Log.i(TAG, "lifecycle $event$suffix")
+  }
+
+  private fun buildDebugModelInfo(model: Model): JsonObject {
+    val state = PhoneOpenAiServerStore.state.value
+    return JsonObject().apply {
+      addProperty("name", model.name)
+      addProperty("display_name", model.displayName.ifEmpty { model.name })
+      addProperty("runtime_type", model.runtimeType.name)
+      addProperty("resident", model.instance != null)
+      addProperty("initializing", model.initializing)
+      addProperty("clean_up_after_init", model.cleanUpAfterInit)
+      addProperty("hosting", PhoneOpenAiServerStore.isHostingModel(model))
+      addProperty("server_status", state.status.name)
+      addProperty("server_host", state.host)
+      addProperty("server_port", state.port)
+      addProperty("stateful_http_responses", state.statefulHttpResponses)
+      addProperty("max_cached_http_sessions", state.maxCachedHttpSessions)
+      addProperty(
+        "http_session_idle_timeout_millis",
+        state.httpSessionIdleTimeoutMinutes * 60_000L,
+      )
+      state.liveStatefulHttpResponses?.let { addProperty("live_stateful_http_responses", it) }
+      addProperty(
+        "live_stateful_http_responses_checked_at_millis",
+        state.liveStatefulHttpResponsesCheckedAtMillis,
+      )
+      state.liveHealthError?.let { addProperty("live_health_error", it) }
+      state.error?.let { addProperty("error", it) }
+    }
+  }
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -130,6 +178,8 @@ class PhoneOpenAiServerService : Service() {
 
   private suspend fun startServer() {
     val model = resolveModelToServe()
+    servedModel = model
+    logModelLifecycle("server_start_requested", model)
     val instance = model?.let { ensureModelInitialized(it) }
     if (model == null || instance == null) {
       PhoneOpenAiServerStore.setError("Initialize the selected model before starting the server.")
@@ -175,6 +225,10 @@ class PhoneOpenAiServerService : Service() {
             .map { OpenAiModelInfo(id = it.name, owned_by = "gallery") }
         },
         currentModelNameProvider = { PhoneOpenAiServerStore.currentModel?.name ?: model.name },
+        debugModelInfoProvider = {
+          PhoneOpenAiServerStore.currentModel?.let { buildDebugModelInfo(it) }
+            ?: buildDebugModelInfo(model)
+        },
         chatSessionFactory = { request -> createHttpSession(request.model, request) },
         responsesConversationFactory = { config -> createHttpConversation(config) },
         audioTranscriptionConversationFactory = { config -> createHttpConversation(config) },
@@ -202,6 +256,7 @@ class PhoneOpenAiServerService : Service() {
       PhoneOpenAiServerStore.setError(e.message ?: "Failed to bind server socket")
       PhoneOpenAiServerStore.setLiveHttpSessionHealth(null, error = e.message)
       server = null
+      servedModel = null
       stopSelf()
       return
     }
@@ -219,7 +274,7 @@ class PhoneOpenAiServerService : Service() {
       },
     )
     Log.i(TAG, "Server started at http://${notificationHost}:${notificationPort}/v1")
-    startHealthPolling(notificationHost, notificationPort)
+    logModelLifecycle("server_started", model)
   }
 
   private fun stopServer(reason: String) {
@@ -228,70 +283,20 @@ class PhoneOpenAiServerService : Service() {
 
   private fun stopServer(reason: String, stopServiceSelf: Boolean) {
     Log.i(TAG, reason)
+    logModelLifecycle("server_stopping")
     try {
       server?.close()
     } catch (_: Exception) {
     }
-    healthPollJob?.cancel()
-    healthPollJob = null
     server = null
     notificationModelName = ""
     PhoneOpenAiServerStore.stop()
     stopForeground(STOP_FOREGROUND_REMOVE)
+    logModelLifecycle("server_stopped")
+    servedModel = null
     if (stopServiceSelf) {
       stopSelf()
     }
-  }
-
-  private fun startHealthPolling(host: String, port: Int) {
-    healthPollJob?.cancel()
-    healthPollJob =
-      scope.launch {
-        val url = URL("http://$host:$port/health")
-        while (isActive) {
-          try {
-            val connection = url.openConnection() as HttpURLConnection
-            connection.requestMethod = "GET"
-            connection.connectTimeout = 1_500
-            connection.readTimeout = 1_500
-            connection.useCaches = false
-            connection.doInput = true
-            val responseCode = connection.responseCode
-            val body =
-              (if (responseCode in 200..399) connection.inputStream else connection.errorStream)
-                ?.bufferedReader()
-                ?.use { it.readText() }
-                .orEmpty()
-            connection.disconnect()
-
-            if (responseCode != 200) {
-              PhoneOpenAiServerStore.setLiveHttpSessionHealth(
-                null,
-                error = "health returned HTTP $responseCode: ${body.take(120)}",
-              )
-            } else {
-              val statefulHttpResponses =
-                Regex("\"stateful_http_responses\"\\s*:\\s*(true|false)")
-                  .find(body)
-                  ?.groupValues
-                  ?.getOrNull(1)
-                  ?.toBooleanStrictOrNull()
-              PhoneOpenAiServerStore.setLiveHttpSessionHealth(
-                statefulHttpResponses,
-                error =
-                  if (statefulHttpResponses == null) {
-                    "health response missing stateful_http_responses"
-                  } else {
-                    null
-                  },
-              )
-            }
-          } catch (e: Exception) {
-            PhoneOpenAiServerStore.setLiveHttpSessionHealth(null, error = e.message)
-          }
-          delay(2_000)
-        }
-      }
   }
 
   private fun createHttpSession(
@@ -405,6 +410,7 @@ class PhoneOpenAiServerService : Service() {
   private suspend fun ensureModelInitialized(model: Model): LlmModelInstance? {
     val instance = model.instance as? LlmModelInstance
     if (instance != null) {
+      logModelLifecycle("model_reused", model)
       return instance
     }
     if (model.runtimeType != RuntimeType.LITERT_LM) {
@@ -419,6 +425,7 @@ class PhoneOpenAiServerService : Service() {
       return null
     }
 
+    logModelLifecycle("model_initializing", model, "path=$modelPath")
     val done = CompletableDeferred<String>()
     try {
       model.runtimeHelper.initialize(
@@ -442,6 +449,7 @@ class PhoneOpenAiServerService : Service() {
       Log.e(TAG, "Failed to initialize model '${model.name}': $error")
       return null
     }
+    logModelLifecycle("model_initialized", model)
     return model.instance as? LlmModelInstance
   }
 
