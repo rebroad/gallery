@@ -35,9 +35,9 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -55,6 +55,7 @@ import com.google.ai.edge.gallery.data.AppBarAction
 import com.google.ai.edge.gallery.data.AppBarActionType
 import com.google.ai.edge.gallery.data.ModelDownloadStatusType
 import com.google.ai.edge.gallery.server.PhoneOpenAiServerManager
+import com.google.ai.edge.gallery.server.PhoneOpenAiServerAutoStartMode
 import com.google.ai.edge.gallery.server.PhoneOpenAiServerStatus
 import com.google.ai.edge.gallery.server.PhoneOpenAiServerStore
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
@@ -77,6 +78,7 @@ fun PhoneOpenAiServerScreen(
     mutableStateOf(modelManagerViewModel.getPhoneServerBindAddresses())
   }
   var bindMenuExpanded by remember { mutableStateOf(false) }
+  var autoStartMenuExpanded by remember { mutableStateOf(false) }
   var portText by remember(serverState.port) { mutableStateOf(serverState.port.toString()) }
   var maxCachedSessionsText by remember(serverState.maxCachedHttpSessions) {
     mutableStateOf(serverState.maxCachedHttpSessions.toString())
@@ -100,6 +102,15 @@ fun PhoneOpenAiServerScreen(
       PhoneOpenAiServerStatus.ERROR -> stringResource(R.string.phone_server_status_error)
       PhoneOpenAiServerStatus.STOPPED -> stringResource(R.string.phone_server_status_stopped)
     }
+  val autoStartModeText =
+    when (serverState.autoStartMode) {
+      PhoneOpenAiServerAutoStartMode.DISABLED ->
+        stringResource(R.string.phone_server_auto_start_disabled)
+      PhoneOpenAiServerAutoStartMode.APP_LAUNCH ->
+        stringResource(R.string.phone_server_auto_start_app_launch)
+      PhoneOpenAiServerAutoStartMode.ALWAYS_ON ->
+        stringResource(R.string.phone_server_auto_start_always_on)
+    }
 
   val selectedBindAddressLabel =
     if (serverState.preferredBindAddress.isBlank()) {
@@ -113,14 +124,13 @@ fun PhoneOpenAiServerScreen(
 
   Scaffold(
     modifier = modifier,
-    topBar = {
-      GalleryTopAppBar(
-        title = stringResource(R.string.phone_server_title),
-        subtitle = stringResource(R.string.phone_server_subtitle),
-        leftAction =
-          AppBarAction(actionType = AppBarActionType.NAVIGATE_UP, actionFn = navigateUp),
-      )
-    },
+      topBar = {
+        GalleryTopAppBar(
+          title = stringResource(R.string.phone_server_title),
+          leftAction =
+            AppBarAction(actionType = AppBarActionType.NAVIGATE_UP, actionFn = navigateUp),
+        )
+      },
   ) { innerPadding ->
     Column(
       modifier =
@@ -138,16 +148,21 @@ fun PhoneOpenAiServerScreen(
           modifier = Modifier.fillMaxWidth().padding(12.dp),
           verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-          Text(
-            text = stringResource(R.string.phone_server_status_label),
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary,
-          )
-          Text(
-            text = statusText,
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-          )
+          Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Text(
+              text = stringResource(R.string.phone_server_status_label),
+              style = MaterialTheme.typography.labelLarge,
+              color = MaterialTheme.colorScheme.primary,
+            )
+            Text(
+              text = statusText,
+              style = MaterialTheme.typography.headlineSmall,
+              color = MaterialTheme.colorScheme.onSurface,
+            )
+          }
           Text(
             text = selectedModel.displayName.ifEmpty { selectedModel.name },
             style = MaterialTheme.typography.titleMedium,
@@ -279,7 +294,7 @@ fun PhoneOpenAiServerScreen(
             label = { Text(stringResource(R.string.phone_server_port_label)) },
             singleLine = true,
             textStyle = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.width(136.dp),
+            modifier = Modifier.width(120.dp),
           )
 
           Row(
@@ -300,12 +315,47 @@ fun PhoneOpenAiServerScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
               )
             }
-            Switch(
-              checked = serverState.autoStartOnAppLaunch,
-              onCheckedChange = { checked ->
-                modelManagerViewModel.setPhoneServerAutoStart(checked)
-              },
-            )
+            Box {
+              Button(
+                onClick = {
+                  autoStartMenuExpanded = true
+                },
+              ) {
+                Text(text = autoStartModeText)
+              }
+              DropdownMenu(
+                expanded = autoStartMenuExpanded,
+                onDismissRequest = { autoStartMenuExpanded = false },
+              ) {
+                DropdownMenuItem(
+                  text = { Text(stringResource(R.string.phone_server_auto_start_disabled)) },
+                  onClick = {
+                    autoStartMenuExpanded = false
+                    modelManagerViewModel.setPhoneServerAutoStartMode(
+                      PhoneOpenAiServerAutoStartMode.DISABLED,
+                    )
+                  },
+                )
+                DropdownMenuItem(
+                  text = { Text(stringResource(R.string.phone_server_auto_start_app_launch)) },
+                  onClick = {
+                    autoStartMenuExpanded = false
+                    modelManagerViewModel.setPhoneServerAutoStartMode(
+                      PhoneOpenAiServerAutoStartMode.APP_LAUNCH,
+                    )
+                  },
+                )
+                DropdownMenuItem(
+                  text = { Text(stringResource(R.string.phone_server_auto_start_always_on)) },
+                  onClick = {
+                    autoStartMenuExpanded = false
+                    modelManagerViewModel.setPhoneServerAutoStartMode(
+                      PhoneOpenAiServerAutoStartMode.ALWAYS_ON,
+                    )
+                  },
+                )
+              }
+            }
           }
         }
       }

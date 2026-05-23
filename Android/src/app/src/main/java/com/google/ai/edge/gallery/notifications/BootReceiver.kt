@@ -19,26 +19,43 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import com.google.ai.edge.gallery.data.DataStoreRepository
+import com.google.ai.edge.gallery.server.startPhoneServerIfAlwaysOn
 import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 /**
- * Reschedules all notifications after the device boots up.
+ * Reschedules notifications and starts the phone server after the device boots up.
  *
  * This receiver is triggered by the ACTION_BOOT_COMPLETED broadcast.
  */
 class BootReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
     if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
-      Log.d(TAG, "Boot completed received, rescheduling notifications")
-      try {
-        val entryPoint =
-          EntryPointAccessors.fromApplication(
-            context.applicationContext,
-            NotificationScheduleManagerEntryPoint::class.java,
-          )
-        entryPoint.notificationScheduleManager().rescheduleAllNotifications()
-      } catch (e: Exception) {
-        Log.e(TAG, "Failed to reschedule notifications on boot", e)
+      val pendingResult = goAsync()
+      CoroutineScope(Dispatchers.IO).launch {
+        try {
+          Log.d(TAG, "Boot completed received, rescheduling notifications and boot-starting server")
+          val notificationEntryPoint =
+            EntryPointAccessors.fromApplication(
+              context.applicationContext,
+              NotificationScheduleManagerEntryPoint::class.java,
+            )
+          notificationEntryPoint.notificationScheduleManager().rescheduleAllNotifications()
+          val phoneServerEntryPoint =
+            EntryPointAccessors.fromApplication(
+              context.applicationContext,
+              PhoneServerBootEntryPoint::class.java,
+            )
+          startPhoneServerIfAlwaysOn(context, phoneServerEntryPoint.dataStoreRepository())
+        } catch (e: Exception) {
+          Log.e(TAG, "Failed to handle boot completed", e)
+        } finally {
+          pendingResult.finish()
+        }
       }
     }
   }
@@ -46,4 +63,10 @@ class BootReceiver : BroadcastReceiver() {
   companion object {
     private const val TAG = "BootReceiver"
   }
+}
+
+@dagger.hilt.EntryPoint
+@dagger.hilt.InstallIn(SingletonComponent::class)
+interface PhoneServerBootEntryPoint {
+  fun dataStoreRepository(): DataStoreRepository
 }

@@ -54,12 +54,21 @@ import com.google.ai.edge.gallery.data.TMP_FILE_EXT
 import com.google.ai.edge.gallery.data.Task
 import com.google.ai.edge.gallery.data.ValueType
 import com.google.ai.edge.gallery.data.createLlmChatConfigs
+import com.google.ai.edge.gallery.data.createModelFromImportedModelInfo
 import com.google.ai.edge.gallery.proto.AccessTokenData
 import com.google.ai.edge.gallery.proto.ImportedModel
 import com.google.ai.edge.gallery.proto.Theme
 import com.google.ai.edge.gallery.runtime.aicore.AICoreModelHelper
-import com.google.ai.edge.gallery.server.PHONE_SERVER_PORT
+import com.google.ai.edge.gallery.server.ACTIVE_MODEL_SECRET_KEY
+import com.google.ai.edge.gallery.server.PHONE_SERVER_AUTO_START_SECRET_KEY
+import com.google.ai.edge.gallery.server.PHONE_SERVER_BIND_ADDRESS_SECRET_KEY
+import com.google.ai.edge.gallery.server.PHONE_SERVER_HTTP_SESSION_IDLE_TIMEOUT_MINUTES_SECRET_KEY
+import com.google.ai.edge.gallery.server.PHONE_SERVER_MAX_CACHED_HTTP_SESSIONS_SECRET_KEY
+import com.google.ai.edge.gallery.server.PHONE_SERVER_PORT_SECRET_KEY
+import com.google.ai.edge.gallery.server.PHONE_SERVER_STATEFUL_HTTP_RESPONSES_SECRET_KEY
+import com.google.ai.edge.gallery.server.PhoneOpenAiServerAutoStartMode
 import com.google.ai.edge.gallery.server.PhoneOpenAiServerStore
+import com.google.ai.edge.gallery.server.loadPhoneOpenAiServerSettings
 import com.google.ai.edge.gallery.server.listBindableLanAddresses
 import com.google.ai.edge.litertlm.Contents
 import com.google.gson.Gson
@@ -83,16 +92,6 @@ import net.openid.appauth.AuthorizationService
 import net.openid.appauth.ResponseTypeValues
 
 private const val TAG = "AGModelManagerViewModel"
-private const val ACTIVE_MODEL_SECRET_KEY = "active_litertlm_model_name"
-private const val PHONE_SERVER_BIND_ADDRESS_SECRET_KEY = "phone_server_bind_address"
-private const val PHONE_SERVER_PORT_SECRET_KEY = "phone_server_port"
-private const val PHONE_SERVER_AUTO_START_SECRET_KEY = "phone_server_auto_start"
-private const val PHONE_SERVER_STATEFUL_HTTP_RESPONSES_SECRET_KEY =
-  "phone_server_stateful_http_responses"
-private const val PHONE_SERVER_MAX_CACHED_HTTP_SESSIONS_SECRET_KEY =
-  "phone_server_max_cached_http_sessions"
-private const val PHONE_SERVER_HTTP_SESSION_IDLE_TIMEOUT_MINUTES_SECRET_KEY =
-  "phone_server_http_session_idle_timeout_minutes"
 private const val TEXT_INPUT_HISTORY_MAX_SIZE = 50
 private const val MODEL_ALLOWLIST_FILENAME = "model_allowlist.json"
 private const val MODEL_ALLOWLIST_TEST_FILENAME = "model_allowlist_test.json"
@@ -226,29 +225,7 @@ constructor(
   var curAccessToken: String = ""
 
   init {
-    PhoneOpenAiServerStore.setServerConfig(
-      preferredBindAddress = dataStoreRepository.readSecret(PHONE_SERVER_BIND_ADDRESS_SECRET_KEY) ?: "",
-      port =
-        dataStoreRepository.readSecret(PHONE_SERVER_PORT_SECRET_KEY)?.toIntOrNull()
-          ?: PHONE_SERVER_PORT,
-      autoStartOnAppLaunch =
-        dataStoreRepository.readSecret(PHONE_SERVER_AUTO_START_SECRET_KEY)?.toBooleanStrictOrNull()
-          ?: false,
-    )
-    PhoneOpenAiServerStore.setHttpSessionConfig(
-      statefulHttpResponses =
-        dataStoreRepository.readSecret(PHONE_SERVER_STATEFUL_HTTP_RESPONSES_SECRET_KEY)
-          ?.toBooleanStrictOrNull()
-          ?: true,
-      maxCachedHttpSessions =
-        dataStoreRepository.readSecret(PHONE_SERVER_MAX_CACHED_HTTP_SESSIONS_SECRET_KEY)
-          ?.toIntOrNull()
-          ?: 4,
-      httpSessionIdleTimeoutMinutes =
-        dataStoreRepository.readSecret(PHONE_SERVER_HTTP_SESSION_IDLE_TIMEOUT_MINUTES_SECRET_KEY)
-          ?.toIntOrNull()
-          ?: 10,
-    )
+    loadPhoneOpenAiServerSettings(dataStoreRepository)
     viewModelScope.launch(Dispatchers.Default) {
       PhoneOpenAiServerStore.state.collect { serverState ->
         val modelName = serverState.modelName
@@ -357,7 +334,7 @@ constructor(
     PhoneOpenAiServerStore.setServerConfig(
       preferredBindAddress = address,
       port = PhoneOpenAiServerStore.state.value.port,
-      autoStartOnAppLaunch = PhoneOpenAiServerStore.state.value.autoStartOnAppLaunch,
+      autoStartMode = PhoneOpenAiServerStore.state.value.autoStartMode,
     )
     dataStoreRepository.saveSecret(PHONE_SERVER_BIND_ADDRESS_SECRET_KEY, address)
   }
@@ -370,7 +347,7 @@ constructor(
     PhoneOpenAiServerStore.setServerConfig(
       preferredBindAddress = PhoneOpenAiServerStore.state.value.preferredBindAddress,
       port = port,
-      autoStartOnAppLaunch = PhoneOpenAiServerStore.state.value.autoStartOnAppLaunch,
+      autoStartMode = PhoneOpenAiServerStore.state.value.autoStartMode,
     )
     dataStoreRepository.saveSecret(PHONE_SERVER_PORT_SECRET_KEY, port.toString())
   }
@@ -380,12 +357,23 @@ constructor(
   }
 
   fun setPhoneServerAutoStart(autoStart: Boolean) {
+    setPhoneServerAutoStartMode(
+      if (autoStart) PhoneOpenAiServerAutoStartMode.APP_LAUNCH
+      else PhoneOpenAiServerAutoStartMode.DISABLED
+    )
+  }
+
+  fun getPhoneServerAutoStartMode(): PhoneOpenAiServerAutoStartMode {
+    return PhoneOpenAiServerStore.state.value.autoStartMode
+  }
+
+  fun setPhoneServerAutoStartMode(autoStartMode: PhoneOpenAiServerAutoStartMode) {
     PhoneOpenAiServerStore.setServerConfig(
       preferredBindAddress = PhoneOpenAiServerStore.state.value.preferredBindAddress,
       port = PhoneOpenAiServerStore.state.value.port,
-      autoStartOnAppLaunch = autoStart,
+      autoStartMode = autoStartMode,
     )
-    dataStoreRepository.saveSecret(PHONE_SERVER_AUTO_START_SECRET_KEY, autoStart.toString())
+    dataStoreRepository.saveSecret(PHONE_SERVER_AUTO_START_SECRET_KEY, autoStartMode.name)
   }
 
   fun getPhoneServerStatefulHttpResponses(): Boolean {
@@ -1336,84 +1324,6 @@ constructor(
       selectedModel = selectedModel,
       textInputHistory = textInputHistory,
     )
-  }
-
-  private fun createModelFromImportedModelInfo(info: ImportedModel): Model {
-    val accelerators: MutableList<Accelerator> =
-      info.llmConfig.compatibleAcceleratorsList
-        .mapNotNull { acceleratorLabel ->
-          when (acceleratorLabel.trim()) {
-            Accelerator.GPU.label -> Accelerator.GPU
-            Accelerator.CPU.label -> Accelerator.CPU
-            Accelerator.NPU.label -> Accelerator.NPU
-            else -> null // Ignore unknown accelerator labels
-          }
-        }
-        .toMutableList()
-    val llmMaxToken = info.llmConfig.defaultMaxTokens
-    val llmSupportImage = info.llmConfig.supportImage
-    val llmSupportAudio = info.llmConfig.supportAudio
-    val llmSupportTinyGarden = info.llmConfig.supportTinyGarden
-    val llmSupportMobileActions = info.llmConfig.supportMobileActions
-    val llmSupportThinking = info.llmConfig.supportThinking
-    val llmSupportSpeculativeDecoding = info.llmConfig.supportSpeculativeDecoding
-    val configs: MutableList<Config> =
-      createLlmChatConfigs(
-          defaultMaxToken = llmMaxToken,
-          defaultTopK = info.llmConfig.defaultTopk,
-          defaultTopP = info.llmConfig.defaultTopp,
-          defaultTemperature = info.llmConfig.defaultTemperature,
-          accelerators = accelerators,
-          supportThinking = llmSupportThinking,
-          supportSpeculativeDecoding = llmSupportSpeculativeDecoding,
-        )
-        .toMutableList()
-    val capabilities: MutableList<ModelCapability> = mutableListOf()
-    val capabilityToTaskTypes: MutableMap<ModelCapability, List<String>> = mutableMapOf()
-    if (llmSupportThinking) {
-      capabilities.add(ModelCapability.LLM_THINKING)
-      capabilityToTaskTypes[ModelCapability.LLM_THINKING] =
-        listOf(
-          BuiltInTaskId.LLM_CHAT,
-          BuiltInTaskId.LLM_ASK_IMAGE,
-          BuiltInTaskId.LLM_ASK_AUDIO,
-        )
-    }
-    if (llmSupportSpeculativeDecoding) {
-      capabilities.add(ModelCapability.SPECULATIVE_DECODING)
-      capabilityToTaskTypes[ModelCapability.SPECULATIVE_DECODING] =
-        listOf(
-          BuiltInTaskId.LLM_CHAT,
-          BuiltInTaskId.LLM_ASK_IMAGE,
-          BuiltInTaskId.LLM_ASK_AUDIO,
-          BuiltInTaskId.LLM_PROMPT_LAB,
-        )
-    }
-    val model =
-      Model(
-        name = info.fileName,
-        url = "",
-        configs = configs,
-        sizeInBytes = info.fileSize,
-        downloadFileName = "$IMPORTS_DIR/${info.fileName}",
-        showBenchmarkButton = false,
-        showRunAgainButton = false,
-        imported = true,
-        llmSupportImage = llmSupportImage,
-        llmSupportAudio = llmSupportAudio,
-        llmSupportTinyGarden = llmSupportTinyGarden,
-        llmSupportMobileActions = llmSupportMobileActions,
-        capabilities = capabilities.toList(),
-        capabilityToTaskTypes = capabilityToTaskTypes.toMap(),
-        llmMaxToken = llmMaxToken,
-        accelerators = accelerators,
-        // We assume all imported models are LLM for now.
-        isLlm = true,
-        runtimeType = RuntimeType.LITERT_LM,
-      )
-    model.preProcess()
-
-    return model
   }
 
   private fun groupTasksByCategory(): Map<String, List<Task>> {

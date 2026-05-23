@@ -46,7 +46,7 @@ data class PhoneOpenAiServerState(
   val modelName: String = "",
   val allowLanNoAuth: Boolean = true,
   val noAuthSubnetCidr: String = "",
-  val autoStartOnAppLaunch: Boolean = false,
+  val autoStartMode: PhoneOpenAiServerAutoStartMode = PhoneOpenAiServerAutoStartMode.DISABLED,
   val statefulHttpResponses: Boolean = true,
   val maxCachedHttpSessions: Int = 4,
   val httpSessionIdleTimeoutMinutes: Int = 10,
@@ -54,7 +54,10 @@ data class PhoneOpenAiServerState(
   val liveStatefulHttpResponsesCheckedAtMillis: Long = 0L,
   val liveHealthError: String? = null,
   val error: String? = null,
-)
+) {
+  val autoStartOnAppLaunch: Boolean
+    get() = autoStartMode.autoStartOnAppLaunch
+}
 
 object PhoneOpenAiServerStore {
   private val _state = MutableStateFlow(PhoneOpenAiServerState())
@@ -92,13 +95,13 @@ object PhoneOpenAiServerStore {
   fun setServerConfig(
     preferredBindAddress: String,
     port: Int,
-    autoStartOnAppLaunch: Boolean,
+    autoStartMode: PhoneOpenAiServerAutoStartMode,
   ) {
     _state.update {
       it.copy(
         preferredBindAddress = preferredBindAddress,
         port = port,
-        autoStartOnAppLaunch = autoStartOnAppLaunch,
+        autoStartMode = autoStartMode,
       )
     }
   }

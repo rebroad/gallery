@@ -122,8 +122,11 @@
   <string name="phone_server_bind_address_auto" translatable="false">Automatic</string>
   <string name="phone_server_bind_address_hint" translatable="false">Choose the network interface or address to bind the server to.</string>
   <string name="phone_server_port_label" translatable="false">Port</string>
-  <string name="phone_server_auto_start_label" translatable="false">Start on app launch</string>
-  <string name="phone_server_auto_start_hint" translatable="false">Automatically start the server when Gallery opens.</string>
+  <string name="phone_server_auto_start_label" translatable="false">Auto-start</string>
+  <string name="phone_server_auto_start_hint" translatable="false">Choose when Gallery should start the server automatically.</string>
+  <string name="phone_server_auto_start_disabled" translatable="false">No auto-start</string>
+  <string name="phone_server_auto_start_app_launch" translatable="false">Start on app launch</string>
+  <string name="phone_server_auto_start_always_on" translatable="false">Always on</string>
   <string name="phone_server_advanced_settings_label" translatable="false">Advanced settings</string>
   <string name="phone_server_stateful_http_responses_label" translatable="false">Stateful HTTP responses</string>
   <string name="phone_server_stateful_http_responses_hint" translatable="false">Remember HTTP responses so previous_response_id can resume a conversation.</string>
