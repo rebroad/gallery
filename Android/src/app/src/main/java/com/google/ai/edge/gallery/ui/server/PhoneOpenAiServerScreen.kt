@@ -16,6 +16,12 @@
 
 package com.google.ai.edge.gallery.ui.server
 
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,11 +34,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -45,7 +46,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-//import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.OutlinedTextFieldDefaults.FocusedBorderThickness
@@ -112,7 +112,11 @@ fun PhoneOpenAiServerScreen(
         .animateFloat(
           initialValue = 0.0f,
           targetValue = 1.0f,
-          animationSpec = infiniteRepeatable(animation = tween(900), repeatMode = RepeatMode.Reverse),
+          animationSpec =
+            infiniteRepeatable(
+              animation = tween(durationMillis = 1800, easing = FastOutSlowInEasing),
+              repeatMode = RepeatMode.Reverse,
+            ),
           label = "phone_server_start_pulse_value",
         )
         .value
@@ -272,9 +276,9 @@ fun PhoneOpenAiServerScreen(
             modifier =
               Modifier.fillMaxWidth().graphicsLayer {
                 if (isStarting) {
-                  scaleX = 1f + (startPulse * 0.02f)
-                  scaleY = 1f + (startPulse * 0.02f)
-                  alpha = 0.92f + (startPulse * 0.08f)
+                  val pulse = 1f + (startPulse * 0.06f)
+                  scaleX = pulse
+                  scaleY = pulse
                 }
               },
           ) {
@@ -283,13 +287,6 @@ fun PhoneOpenAiServerScreen(
               verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
               Text(text = startButtonText)
-              /*if (isStarting) {
-                LinearProgressIndicator(
-                  modifier = Modifier.fillMaxWidth().height(3.dp),
-                  color = MaterialTheme.colorScheme.onPrimaryContainer,
-                  trackColor = MaterialTheme.colorScheme.primaryContainer,
-                )
-              }*/
             }
           }
         }
