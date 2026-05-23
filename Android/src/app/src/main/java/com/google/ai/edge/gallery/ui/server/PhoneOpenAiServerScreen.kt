@@ -25,16 +25,31 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+//import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.OutlinedTextFieldDefaults.FocusedBorderThickness
+import androidx.compose.material3.OutlinedTextFieldDefaults.UnfocusedBorderThickness
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.Switch
@@ -46,8 +61,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.google.ai.edge.gallery.GalleryTopAppBar
 import com.google.ai.edge.gallery.R
@@ -88,6 +105,20 @@ fun PhoneOpenAiServerScreen(
   }
   val isRunning = serverState.status == PhoneOpenAiServerStatus.RUNNING
   val isStarting = serverState.status == PhoneOpenAiServerStatus.STARTING
+  val startPulseTransition = rememberInfiniteTransition(label = "phone_server_start_pulse")
+  val startPulse =
+    if (isStarting) {
+      startPulseTransition
+        .animateFloat(
+          initialValue = 0.0f,
+          targetValue = 1.0f,
+          animationSpec = infiniteRepeatable(animation = tween(900), repeatMode = RepeatMode.Reverse),
+          label = "phone_server_start_pulse_value",
+        )
+        .value
+    } else {
+      0.0f
+    }
   val liveStatefulHttpResponses = serverState.liveStatefulHttpResponses
   val effectiveStatefulHttpResponses =
     if (isRunning && liveStatefulHttpResponses != null) {
@@ -124,20 +155,21 @@ fun PhoneOpenAiServerScreen(
 
   Scaffold(
     modifier = modifier,
-      topBar = {
-        GalleryTopAppBar(
-          title = stringResource(R.string.phone_server_title),
-          leftAction =
-            AppBarAction(actionType = AppBarActionType.NAVIGATE_UP, actionFn = navigateUp),
-        )
-      },
+    topBar = {
+      GalleryTopAppBar(
+        title = stringResource(R.string.phone_server_title),
+        leftAction =
+          AppBarAction(actionType = AppBarActionType.NAVIGATE_UP, actionFn = navigateUp),
+      )
+    },
   ) { innerPadding ->
     Column(
       modifier =
         Modifier.fillMaxSize()
           .background(MaterialTheme.colorScheme.surfaceContainer)
           .padding(innerPadding)
-          .padding(12.dp),
+          .padding(12.dp)
+          .verticalScroll(rememberScrollState()),
       verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
       Card(
@@ -203,8 +235,17 @@ fun PhoneOpenAiServerScreen(
             style = MaterialTheme.typography.titleLarge,
             color = MaterialTheme.colorScheme.onSurface,
           )
+          val startButtonText =
+            when {
+              isRunning -> stringResource(R.string.phone_server_stop)
+              isStarting -> stringResource(R.string.phone_server_starting_model)
+              else -> stringResource(R.string.phone_server_start)
+            }
           Button(
             onClick = {
+              if (isStarting) {
+                return@Button
+              }
               if (isRunning) {
                 PhoneOpenAiServerManager.stop(context = context)
               } else {
@@ -218,14 +259,38 @@ fun PhoneOpenAiServerScreen(
                 )
               }
             },
-            enabled = !isStarting && (selectedModelDownloaded || isRunning),
-            modifier = Modifier.fillMaxWidth(),
+            enabled = selectedModelDownloaded || isRunning || isStarting,
+            colors =
+              if (isStarting) {
+                ButtonDefaults.buttonColors(
+                  containerColor = MaterialTheme.colorScheme.primaryContainer,
+                  contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+              } else {
+                ButtonDefaults.buttonColors()
+              },
+            modifier =
+              Modifier.fillMaxWidth().graphicsLayer {
+                if (isStarting) {
+                  scaleX = 1f + (startPulse * 0.02f)
+                  scaleY = 1f + (startPulse * 0.02f)
+                  alpha = 0.92f + (startPulse * 0.08f)
+                }
+              },
           ) {
-            Text(
-              text =
-                if (isRunning) stringResource(R.string.phone_server_stop)
-                else stringResource(R.string.phone_server_start)
-            )
+            Column(
+              horizontalAlignment = Alignment.CenterHorizontally,
+              verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+              Text(text = startButtonText)
+              /*if (isStarting) {
+                LinearProgressIndicator(
+                  modifier = Modifier.fillMaxWidth().height(3.dp),
+                  color = MaterialTheme.colorScheme.onPrimaryContainer,
+                  trackColor = MaterialTheme.colorScheme.primaryContainer,
+                )
+              }*/
+            }
           }
         }
       }
@@ -283,7 +348,8 @@ fun PhoneOpenAiServerScreen(
             )
           }
 
-          OutlinedTextField(
+          val portFieldInteractionSource = remember { MutableInteractionSource() }
+          BasicTextField(
             value = portText,
             onValueChange = { next ->
               if (next.isEmpty() || next.all(Char::isDigit)) {
@@ -291,10 +357,36 @@ fun PhoneOpenAiServerScreen(
                 next.toIntOrNull()?.let { modelManagerViewModel.setPhoneServerPort(it) }
               }
             },
-            label = { Text(stringResource(R.string.phone_server_port_label)) },
             singleLine = true,
-            textStyle = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.width(120.dp),
+            textStyle =
+              MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+            modifier = Modifier.width(120.dp).heightIn(min = 48.dp),
+            decorationBox = { innerTextField ->
+              OutlinedTextFieldDefaults.DecorationBox(
+                value = portText,
+                innerTextField = innerTextField,
+                enabled = true,
+                singleLine = true,
+                visualTransformation = VisualTransformation.None,
+                interactionSource = portFieldInteractionSource,
+                contentPadding =
+                  androidx.compose.foundation.layout.PaddingValues(
+                    horizontal = 12.dp,
+                    vertical = 4.dp,
+                  ),
+                container = {
+                  OutlinedTextFieldDefaults.Container(
+                    enabled = true,
+                    isError = false,
+                    interactionSource = portFieldInteractionSource,
+                    colors = OutlinedTextFieldDefaults.colors(),
+                    shape = OutlinedTextFieldDefaults.shape,
+                    focusedBorderThickness = FocusedBorderThickness,
+                    unfocusedBorderThickness = UnfocusedBorderThickness,
+                  )
+                },
+              )
+            },
           )
 
           Row(

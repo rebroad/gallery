@@ -118,6 +118,7 @@
   <string name="phone_server_listen_hint" translatable="false">Start the server to expose the current model over HTTP on your LAN.</string>
   <string name="phone_server_stop" translatable="false">Stop server</string>
   <string name="phone_server_start" translatable="false">Start server</string>
+  <string name="phone_server_starting_model" translatable="false">Loading model…</string>
   <string name="phone_server_bind_address_label" translatable="false">Listen on</string>
   <string name="phone_server_bind_address_auto" translatable="false">Automatic</string>
   <string name="phone_server_bind_address_hint" translatable="false">Choose the network interface or address to bind the server to.</string>
