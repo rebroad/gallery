@@ -72,7 +72,7 @@ data class OpenAiResponsesRequest(
   val model: String? = null,
   val input: JsonElement? = null,
   val messages: List<OpenAiChatMessage> = emptyList(),
-  val previous_response_id: String? = null,
+  val conversation: JsonElement? = null,
   val audio_base64: String? = null,
   val stream: Boolean = false,
   val temperature: Double? = null,
@@ -133,8 +133,18 @@ data class OpenAiResponseOutput(
   val content: List<OpenAiResponseOutputContent>,
 )
 
+data class OpenAiConversation(
+  val id: String,
+  val `object`: String = "conversation",
+  val created_at: Long,
+)
+
 data class OpenAiResponse(
   val id: String,
+  val `object`: String = "response",
+  val created_at: Long,
+  val model: String,
+  val conversation: OpenAiConversation? = null,
   val output: List<OpenAiResponseOutput>,
 )
 
@@ -148,6 +158,7 @@ private data class HttpRequest(
 private data class HttpSessionState(
   val modelName: String,
   val conversationConfig: ConversationConfig,
+  val conversationId: String,
   val history: List<Message>,
   var lastAccessMillis: Long = System.currentTimeMillis(),
   val mutex: Mutex = Mutex(),
@@ -445,7 +456,8 @@ class OpenAiHttpServer(
     }
 
     val statefulResponsesEnabled = isStatefulResponsesEnabled()
-    if (request.previous_response_id != null && !statefulResponsesEnabled) {
+    val requestConversationId = request.extractConversationId()
+    if (requestConversationId != null && !statefulResponsesEnabled) {
       writeJsonResponse(
         socket,
         400,
@@ -453,7 +465,7 @@ class OpenAiHttpServer(
         jsonObjectOf(
           "error" to
             jsonObjectOf(
-              "message" to "Stateful HTTP responses are disabled. Omit previous_response_id."
+              "message" to "Stateful HTTP responses are disabled. Omit conversation."
             )
         ),
       )
@@ -462,15 +474,15 @@ class OpenAiHttpServer(
 
     val now = System.currentTimeMillis()
     val existingSessionState =
-      request.previous_response_id?.let { previousId ->
+      requestConversationId?.let { conversationId ->
         synchronized(sessionRegistryLock) {
           evictExpiredSessionsLocked(now)
-          activeResponses[previousId]
+          activeResponses[conversationId]
         }
       }
 
     val sessionState =
-      if (request.previous_response_id != null) {
+      if (requestConversationId != null) {
         val parentSessionState =
           existingSessionState
             ?: run {
@@ -481,7 +493,7 @@ class OpenAiHttpServer(
                 jsonObjectOf(
                   "error" to
                     jsonObjectOf(
-                      "message" to "Unknown previous_response_id ${request.previous_response_id}"
+                      "message" to "Unknown conversation ${requestConversationId}"
                     )
                 ),
               )
@@ -489,13 +501,16 @@ class OpenAiHttpServer(
             }
         parentSessionState.copy(lastAccessMillis = now)
       } else {
+        val newConversationId = "conv_${UUID.randomUUID()}"
         HttpSessionState(
           modelName = modelName(request.model),
           conversationConfig = request.toConversationConfig(),
+          conversationId = newConversationId,
           history = emptyList(),
           lastAccessMillis = now,
         )
       }
+    val conversationId = sessionState.conversationId
 
     val responseId = "resp-${UUID.randomUUID()}"
     val responseText =
@@ -535,7 +550,7 @@ class OpenAiHttpServer(
       )
     if (statefulResponsesEnabled) {
       synchronized(sessionRegistryLock) {
-        activeResponses[responseId] = committedSessionState
+        activeResponses[conversationId] = committedSessionState
         evictSessionsLocked(System.currentTimeMillis())
       }
     }
@@ -546,6 +561,17 @@ class OpenAiHttpServer(
         "OK",
         OpenAiResponse(
           id = responseId,
+          created_at = System.currentTimeMillis() / 1000L,
+          model = sessionState.modelName,
+          conversation =
+            if (statefulResponsesEnabled) {
+              OpenAiConversation(
+                id = conversationId,
+                created_at = now / 1000L,
+              )
+            } else {
+              null
+            },
           output =
             listOf(
               OpenAiResponseOutput(
@@ -932,6 +958,23 @@ class OpenAiHttpServer(
       return messagesFromRequest.last().extractText()
     }
     return ""
+  }
+
+  private fun OpenAiResponsesRequest.extractConversationId(): String? {
+    val raw = conversation ?: return null
+    return when {
+      raw.isJsonNull -> null
+      raw.isJsonPrimitive -> raw.asString.trim().takeIf { it.isNotEmpty() }
+      raw.isJsonObject -> {
+        val idElement = raw.asJsonObject.get("id")
+        if (idElement != null && idElement.isJsonPrimitive) {
+          idElement.asString.trim().takeIf { it.isNotEmpty() }
+        } else {
+          null
+        }
+      }
+      else -> null
+    }
   }
 
   private suspend fun runStatefulResponse(

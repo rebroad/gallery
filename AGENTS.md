@@ -20,4 +20,5 @@
 - No duplicate HTTP server copies.
 - Do not assume user wants less feature just because it is annoying.
 - If you find bad assumption or build trap, update AGENTS.md right away.
+- When a build is running, poll it no more often than every 90 seconds.
 - Write notes short. Caveman short.

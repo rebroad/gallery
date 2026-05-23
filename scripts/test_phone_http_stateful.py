@@ -197,6 +197,19 @@ def first_response_id(payload: dict[str, Any]) -> str:
     return response_id.strip()
 
 
+def first_conversation_id(payload: dict[str, Any]) -> str:
+    conversation = payload.get("conversation")
+    if isinstance(conversation, str):
+        conversation_id = conversation.strip()
+        if conversation_id:
+            return conversation_id
+    elif isinstance(conversation, dict):
+        conversation_id = conversation.get("id")
+        if isinstance(conversation_id, str) and conversation_id.strip():
+            return conversation_id.strip()
+    raise RuntimeError(f"response had no conversation id: {payload}")
+
+
 def make_memory_prompt(word: str) -> str:
     return (
         f"Remember this exact secret word for this response chain: {word}. "
@@ -258,7 +271,7 @@ def send_stateful_response(
     url: str,
     model: str | None,
     prompt: str,
-    previous_response_id: str | None = None,
+    conversation_id: str | None = None,
     audio_base64: str | None = None,
 ) -> tuple[str, str]:
     payload: dict[str, Any] = {
@@ -269,18 +282,19 @@ def send_stateful_response(
     }
     if model:
         payload["model"] = model
-    if previous_response_id:
-        payload["previous_response_id"] = previous_response_id
+    if conversation_id:
+        payload["conversation"] = {"id": conversation_id}
     if audio_base64:
         payload["audio_base64"] = audio_base64
     result = request_json(f"{url}/v1/responses", payload)
     if result.status != 200:
         raise RuntimeError(f"responses request failed with {result.status}: {result.body}")
     response_id = first_response_id(result.body)
+    conversation_id = first_conversation_id(result.body)
     text = extract_response_text(result.body)
     if not text:
         raise RuntimeError(f"responses request returned no text: {result.body}")
-    return response_id, text
+    return conversation_id, text
 
 
 def send_audio_transcription(url: str, model: str | None, prompt: str, audio_base64: str) -> str:
@@ -342,13 +356,13 @@ def main() -> int:
     word_b = f"beta-{secrets.token_hex(4)}"
     resp_a_1, text_a_1 = send_stateful_response(args.url, model, make_memory_prompt(word_a))
     resp_b_1, text_b_1 = send_stateful_response(args.url, model, make_memory_prompt(word_b))
-    print(f"session A initial response: id={resp_a_1} text={text_a_1!r}")
-    print(f"session B initial response: id={resp_b_1} text={text_b_1!r}")
+    print(f"session A initial response: conversation={resp_a_1} text={text_a_1!r}")
+    print(f"session B initial response: conversation={resp_b_1} text={text_b_1!r}")
 
     resp_a_2, text_a_2 = send_stateful_response(args.url, model, make_recall_prompt(), resp_a_1)
     resp_b_2, text_b_2 = send_stateful_response(args.url, model, make_recall_prompt(), resp_b_1)
-    print(f"session A recall response: id={resp_a_2} text={text_a_2!r}")
-    print(f"session B recall response: id={resp_b_2} text={text_b_2!r}")
+    print(f"session A recall response: conversation={resp_a_2} text={text_a_2!r}")
+    print(f"session B recall response: conversation={resp_b_2} text={text_b_2!r}")
     assert_contains(text_a_2, word_a, "session A recall")
     assert_contains(text_b_2, word_b, "session B recall")
 
@@ -361,7 +375,7 @@ def main() -> int:
         make_multimodal_prompt(multimodal_word),
         audio_base64=multimodal_audio,
     )
-    print(f"multimodal initial response: id={resp_m_1} text={text_m_1!r}")
+    print(f"multimodal initial response: conversation={resp_m_1} text={text_m_1!r}")
     assert_contains(text_m_1.lower(), "stored", "multimodal initial response")
 
     # Prove the configured cache limit by filling it and then ensuring the oldest
@@ -373,7 +387,7 @@ def main() -> int:
         response_id, text = send_stateful_response(args.url, model, make_memory_prompt(word))
         retained_ids.append(response_id)
         retained_words.append(word)
-        print(f"slot {i + 1} initial response: id={response_id} text={text!r}")
+        print(f"slot {i + 1} initial response: conversation={response_id} text={text!r}")
 
     oldest_id = retained_ids[0]
     oldest_word = retained_words[0]
@@ -382,7 +396,7 @@ def main() -> int:
         {
             "model": model,
             "input": make_recall_prompt(),
-            "previous_response_id": oldest_id,
+            "conversation": {"id": oldest_id},
             "stream": False,
         },
     )
