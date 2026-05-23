@@ -327,7 +327,9 @@ class OpenAiHttpServer(
           }
         }
       } catch (e: Exception) {
-        onError("Client handling failed: ${e.message ?: e::class.java.simpleName}")
+        onError(
+          "Client handling failed: ${e.message ?: e::class.java.simpleName}\n${e.stackTraceToString()}"
+        )
       }
     }
   }
@@ -444,152 +446,174 @@ class OpenAiHttpServer(
   }
 
   private suspend fun handleResponses(socket: Socket, request: OpenAiResponsesRequest) {
-    val prompt = request.extractPrompt()
-    if (prompt.isBlank()) {
-      writeJsonResponse(
-        socket,
-        400,
-        "Bad Request",
-        jsonObjectOf("error" to jsonObjectOf("message" to "Missing input")),
-      )
-      return
-    }
-
-    val statefulResponsesEnabled = isStatefulResponsesEnabled()
-    val requestConversationId = request.extractConversationId()
-    if (requestConversationId != null && !statefulResponsesEnabled) {
-      writeJsonResponse(
-        socket,
-        400,
-        "Bad Request",
-        jsonObjectOf(
-          "error" to
-            jsonObjectOf(
-              "message" to "Stateful HTTP responses are disabled. Omit conversation."
-            )
-        ),
-      )
-      return
-    }
-
-    val now = System.currentTimeMillis()
-    val existingSessionState =
-      requestConversationId?.let { conversationId ->
-        synchronized(sessionRegistryLock) {
-          evictExpiredSessionsLocked(now)
-          activeResponses[conversationId]
-        }
-      }
-
-    val sessionState =
-      if (requestConversationId != null) {
-        val parentSessionState =
-          existingSessionState
-            ?: run {
-              writeJsonResponse(
-                socket,
-                404,
-                "Not Found",
-                jsonObjectOf(
-                  "error" to
-                    jsonObjectOf(
-                      "message" to "Unknown conversation ${requestConversationId}"
-                    )
-                ),
-              )
-              return
-            }
-        parentSessionState.copy(lastAccessMillis = now)
-      } else {
-        val newConversationId = "conv_${UUID.randomUUID()}"
-        HttpSessionState(
-          modelName = modelName(request.model),
-          conversationConfig = request.toConversationConfig(),
-          conversationId = newConversationId,
-          history = emptyList(),
-          lastAccessMillis = now,
-        )
-      }
-    val conversationId = sessionState.conversationId
-
-    val responseId = "resp-${UUID.randomUUID()}"
-    val responseText =
-      try {
-        if (request.stream) {
-          val responseBuffer = StringBuilder()
-          streamResponse(
-            socket,
-            sessionState,
-            request,
-            prompt,
-            responseId,
-            sessionState.modelName,
-            responseBuffer,
-          )
-          responseBuffer.toString()
-        } else {
-          runStatefulResponse(sessionState, request, prompt)
-        }
-      } catch (e: IllegalArgumentException) {
+    try {
+      val prompt = request.extractPrompt()
+      if (prompt.isBlank()) {
         writeJsonResponse(
           socket,
           400,
           "Bad Request",
-          jsonObjectOf("error" to jsonObjectOf("message" to "Invalid audio_base64: ${e.message}")),
+          jsonObjectOf("error" to jsonObjectOf("message" to "Missing input")),
         )
         return
       }
 
-    val committedSessionState =
-      sessionState.copy(
-        lastAccessMillis = System.currentTimeMillis(),
-        history =
-          sessionState.history +
-            Message.user(buildResponseContents(request, prompt)) +
-            Message.model(responseText),
-      )
-    if (statefulResponsesEnabled) {
-      synchronized(sessionRegistryLock) {
-        activeResponses[conversationId] = committedSessionState
-        evictSessionsLocked(System.currentTimeMillis())
+      val statefulResponsesEnabled = isStatefulResponsesEnabled()
+      val requestConversationId = request.extractConversationId()
+      if (requestConversationId != null && !statefulResponsesEnabled) {
+        writeJsonResponse(
+          socket,
+          400,
+          "Bad Request",
+          jsonObjectOf(
+            "error" to
+              jsonObjectOf(
+                "message" to "Stateful HTTP responses are disabled. Omit conversation."
+              )
+          ),
+        )
+        return
       }
-    }
-    if (!request.stream) {
-      writeJsonResponse(
-        socket,
-        200,
-        "OK",
-        OpenAiResponse(
-          id = responseId,
-          created_at = System.currentTimeMillis() / 1000L,
-          model = sessionState.modelName,
-          conversation =
-            if (statefulResponsesEnabled) {
-              OpenAiConversation(
-                id = conversationId,
-                created_at = now / 1000L,
-              )
-            } else {
-              null
-            },
-          output =
-            listOf(
-              OpenAiResponseOutput(
-                id = "msg-${UUID.randomUUID()}",
-                type = "message",
-                role = "assistant",
-                status = "completed",
-                content =
-                  listOf(
-                    OpenAiResponseOutputContent(
-                      type = "output_text",
-                      text = responseText,
-                    )
+
+      val now = System.currentTimeMillis()
+      val existingSessionState =
+        requestConversationId?.let { conversationId ->
+          synchronized(sessionRegistryLock) {
+            evictExpiredSessionsLocked(now)
+            activeResponses[conversationId]
+          }
+        }
+
+      val sessionState =
+        if (requestConversationId != null) {
+          val parentSessionState =
+            existingSessionState
+              ?: run {
+                writeJsonResponse(
+                  socket,
+                  404,
+                  "Not Found",
+                  jsonObjectOf(
+                    "error" to
+                      jsonObjectOf(
+                        "message" to "Unknown conversation ${requestConversationId}"
+                      )
                   ),
-              )
-            ),
-        ),
+                )
+                return
+              }
+          parentSessionState.copy(lastAccessMillis = now)
+        } else {
+          val newConversationId = "conv_${UUID.randomUUID()}"
+          HttpSessionState(
+            modelName = modelName(request.model),
+            conversationConfig = request.toConversationConfig(),
+            conversationId = newConversationId,
+            history = emptyList(),
+            lastAccessMillis = now,
+          )
+        }
+      val conversationId = sessionState.conversationId
+
+      val responseId = "resp-${UUID.randomUUID()}"
+      val responseText =
+        try {
+          if (request.stream) {
+            val responseBuffer = StringBuilder()
+            streamResponse(
+              socket,
+              sessionState,
+              request,
+              prompt,
+              responseId,
+              sessionState.modelName,
+              responseBuffer,
+            )
+            responseBuffer.toString()
+          } else {
+            runStatefulResponse(sessionState, request, prompt)
+          }
+        } catch (e: IllegalArgumentException) {
+          writeJsonResponse(
+            socket,
+            400,
+            "Bad Request",
+            jsonObjectOf("error" to jsonObjectOf("message" to "Invalid audio_base64: ${e.message}")),
+          )
+          return
+        }
+
+      val committedSessionState =
+        sessionState.copy(
+          lastAccessMillis = System.currentTimeMillis(),
+          history =
+            sessionState.history +
+              Message.user(buildResponseContents(request, prompt)) +
+              Message.model(responseText),
+        )
+      if (statefulResponsesEnabled) {
+        synchronized(sessionRegistryLock) {
+          activeResponses[conversationId] = committedSessionState
+          evictSessionsLocked(System.currentTimeMillis())
+        }
+      }
+      if (!request.stream) {
+        writeJsonResponse(
+          socket,
+          200,
+          "OK",
+          OpenAiResponse(
+            id = responseId,
+            created_at = System.currentTimeMillis() / 1000L,
+            model = sessionState.modelName,
+            conversation =
+              if (statefulResponsesEnabled) {
+                OpenAiConversation(
+                  id = conversationId,
+                  created_at = now / 1000L,
+                )
+              } else {
+                null
+              },
+            output =
+              listOf(
+                OpenAiResponseOutput(
+                  id = "msg-${UUID.randomUUID()}",
+                  type = "message",
+                  role = "assistant",
+                  status = "completed",
+                  content =
+                    listOf(
+                      OpenAiResponseOutputContent(
+                        type = "output_text",
+                        text = responseText,
+                      )
+                    ),
+                )
+              ),
+          ),
+        )
+      }
+    } catch (e: Throwable) {
+      onError(
+        "Responses request failed: ${e.message ?: e::class.java.simpleName}\n${e.stackTraceToString()}"
       )
+      if (!socket.isClosed) {
+        try {
+          writeJsonResponse(
+            socket,
+            500,
+            "Internal Server Error",
+            jsonObjectOf(
+              "error" to
+                jsonObjectOf(
+                  "message" to (e.message ?: e::class.java.simpleName)
+                )
+            ),
+          )
+        } catch (_: Exception) {
+        }
+      }
     }
   }
 
