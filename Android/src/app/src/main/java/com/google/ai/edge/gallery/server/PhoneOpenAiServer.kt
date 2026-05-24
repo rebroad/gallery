@@ -243,6 +243,17 @@ object PhoneOpenAiServerManager {
       return null
     }
 
+    if (desiredBindAddress.isBlank()) {
+      val errorMessage =
+        if (PhoneOpenAiServerStore.state.value.preferredBindAddress.isNotBlank()) {
+          "Selected interface ${PhoneOpenAiServerStore.state.value.preferredBindAddress} is unavailable. Wait for ZeroTier or choose another interface."
+        } else {
+          "No LAN address found. Connect Wi-Fi or your VPN interface and try again."
+        }
+      PhoneOpenAiServerStore.setError(errorMessage)
+      return errorMessage
+    }
+
     PhoneOpenAiServerStore.setCurrentModel(model)
     PhoneOpenAiServerStore.setAvailableModels(availableModels)
     PhoneOpenAiServerStore.setLanAuthBypass(allowLanNoAuth, noAuthSubnetCidr)

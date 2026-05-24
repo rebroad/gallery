@@ -281,12 +281,37 @@ fun PhoneOpenAiServerScreen(
                   scaleY = pulse
                 }
               },
-          ) {
+            ) {
             Column(
               horizontalAlignment = Alignment.CenterHorizontally,
               verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
               Text(text = startButtonText)
+            }
+          }
+          if (serverState.error != null) {
+            Card(
+              colors =
+                CardDefaults.cardColors(
+                  containerColor = MaterialTheme.colorScheme.errorContainer,
+                ),
+              modifier = Modifier.fillMaxWidth(),
+            ) {
+              Column(
+                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                Text(
+                  text = stringResource(R.string.error),
+                  style = MaterialTheme.typography.labelLarge,
+                  color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+                Text(
+                  text = serverState.error ?: "",
+                  style = MaterialTheme.typography.bodyMedium,
+                  color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+              }
             }
           }
         }
@@ -550,29 +575,6 @@ fun PhoneOpenAiServerScreen(
               singleLine = true,
               textStyle = MaterialTheme.typography.bodyMedium,
               modifier = Modifier.weight(1f),
-            )
-          }
-        }
-      }
-
-      if (serverState.error != null) {
-        Card(
-          colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
-          modifier = Modifier.fillMaxWidth(),
-        ) {
-          Column(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-          ) {
-            Text(
-              text = stringResource(R.string.error),
-              style = MaterialTheme.typography.labelLarge,
-              color = MaterialTheme.colorScheme.onErrorContainer,
-            )
-            Text(
-              text = serverState.error ?: "",
-              style = MaterialTheme.typography.bodyMedium,
-              color = MaterialTheme.colorScheme.onErrorContainer,
             )
           }
         }

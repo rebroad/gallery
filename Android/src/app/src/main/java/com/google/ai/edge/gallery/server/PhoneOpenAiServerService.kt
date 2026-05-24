@@ -134,17 +134,6 @@ class PhoneOpenAiServerService : Service() {
         return START_NOT_STICKY
       }
       else -> {
-        val desiredModel = resolveModelToServe()
-        val desiredBindAddress = resolveBindAddress(PhoneOpenAiServerStore.state.value.preferredBindAddress)
-        val desiredHost = desiredBindAddress?.hostAddress.orEmpty()
-        val desiredPort = PhoneOpenAiServerStore.state.value.port
-        val desiredModelName = desiredModel?.name.orEmpty()
-        val needsRestart =
-          server != null &&
-            (notificationHost != desiredHost ||
-              notificationPort != desiredPort ||
-              notificationModelName != desiredModelName)
-
         if (server == null) {
           startForeground(
             NOTIFICATION_ID,
@@ -158,6 +147,33 @@ class PhoneOpenAiServerService : Service() {
               0
             },
           )
+        }
+        val preferredBindAddress = PhoneOpenAiServerStore.state.value.preferredBindAddress.trim()
+        val bindAddress = resolveBindAddress(preferredBindAddress)
+        if (server == null && bindAddress == null) {
+          val errorMessage =
+            if (preferredBindAddress.isNotEmpty()) {
+              "Selected interface $preferredBindAddress is unavailable. Wait for ZeroTier or choose another interface."
+            } else {
+              "No LAN address found. Connect Wi-Fi or your VPN interface and try again."
+            }
+          Log.w(TAG, errorMessage)
+          PhoneOpenAiServerStore.setError(errorMessage)
+          stopServer(errorMessage)
+          return START_NOT_STICKY
+        }
+
+        val desiredModel = resolveModelToServe()
+        val desiredHost = bindAddress?.hostAddress.orEmpty()
+        val desiredPort = PhoneOpenAiServerStore.state.value.port
+        val desiredModelName = desiredModel?.name.orEmpty()
+        val needsRestart =
+          server != null &&
+            (notificationHost != desiredHost ||
+              notificationPort != desiredPort ||
+              notificationModelName != desiredModelName)
+
+        if (server == null) {
           scope.launch { startServer() }
         } else if (needsRestart) {
           scope.launch {
@@ -177,32 +193,33 @@ class PhoneOpenAiServerService : Service() {
   }
 
   private suspend fun startServer() {
-    val model = resolveModelToServe()
-    servedModel = model
-    logModelLifecycle("server_start_requested", model)
-    val instance = model?.let { ensureModelInitialized(it) }
-    if (model == null || instance == null) {
-      PhoneOpenAiServerStore.setError("Initialize the selected model before starting the server.")
-      stopSelf()
-      return
-    }
-    if (model.runtimeType != RuntimeType.LITERT_LM) {
-      PhoneOpenAiServerStore.setError("Only LiteRT-LM models are supported by the phone server.")
-      stopSelf()
-      return
-    }
-
     val preferredBindAddress = PhoneOpenAiServerStore.state.value.preferredBindAddress.trim()
     val bindAddress = resolveBindAddress(preferredBindAddress)
     if (bindAddress == null) {
       val errorMessage =
         if (preferredBindAddress.isNotEmpty()) {
-          "Selected interface $preferredBindAddress is unavailable. Choose another interface."
+          "Selected interface $preferredBindAddress is unavailable. Wait for ZeroTier or choose another interface."
         } else {
-          "No LAN address found. Connect to Wi-Fi and try again."
+          "No LAN address found. Connect Wi-Fi or your VPN interface and try again."
         }
+      Log.w(TAG, errorMessage)
       PhoneOpenAiServerStore.setError(errorMessage)
-      stopSelf()
+      stopServer(errorMessage)
+      return
+    }
+
+    val model = resolveModelToServe()
+    servedModel = model
+    logModelLifecycle("server_start_requested", model, "bind=${bindAddress.hostAddress.orEmpty()}")
+    val instance = model?.let { ensureModelInitialized(it) }
+    if (model == null || instance == null) {
+      PhoneOpenAiServerStore.setError("Initialize the selected model before starting the server.")
+      stopServer("Initialize the selected model before starting the server.")
+      return
+    }
+    if (model.runtimeType != RuntimeType.LITERT_LM) {
+      PhoneOpenAiServerStore.setError("Only LiteRT-LM models are supported by the phone server.")
+      stopServer("Only LiteRT-LM models are supported by the phone server.")
       return
     }
 
@@ -257,7 +274,7 @@ class PhoneOpenAiServerService : Service() {
       PhoneOpenAiServerStore.setLiveHttpSessionHealth(null, error = e.message)
       server = null
       servedModel = null
-      stopSelf()
+      stopServer(e.message ?: "Failed to bind server socket")
       return
     }
 

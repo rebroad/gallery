@@ -30,8 +30,7 @@ import kotlinx.coroutines.delay
 
 private const val TAG = "AGPhoneServerBoot"
 private const val MODEL_ALLOWLIST_FILENAME = "model_allowlist.json"
-private const val BOOT_BIND_WAIT_ATTEMPTS = 60
-private const val BOOT_BIND_WAIT_DELAY_MILLIS = 2_000L
+private const val BOOT_BIND_WAIT_DELAY_MILLIS = 1_000L
 
 internal suspend fun startPhoneServerIfAlwaysOn(
   context: Context,
@@ -72,17 +71,18 @@ private suspend fun waitForPreferredBindAddressIfNeeded(): Boolean {
   if (preferredBindAddress.isBlank()) {
     return true
   }
-  repeat(BOOT_BIND_WAIT_ATTEMPTS) { attempt ->
+  var attempt = 0
+  while (true) {
     if (resolveBindAddress(preferredBindAddress) != null) {
       return true
     }
     Log.i(
       TAG,
-      "Waiting for preferred bind address '$preferredBindAddress' to appear on boot (attempt ${attempt + 1}/$BOOT_BIND_WAIT_ATTEMPTS)",
+      "Waiting for preferred bind address '$preferredBindAddress' to appear on boot (attempt ${attempt + 1})",
     )
     delay(BOOT_BIND_WAIT_DELAY_MILLIS)
+    attempt++
   }
-  return resolveBindAddress(preferredBindAddress) != null
 }
 
 private fun resolveBootStartModel(
