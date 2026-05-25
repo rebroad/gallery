@@ -110,12 +110,6 @@ class PhoneOpenAiServerService : Service() {
         "http_session_idle_timeout_millis",
         state.httpSessionIdleTimeoutMinutes * 60_000L,
       )
-      state.liveStatefulHttpResponses?.let { addProperty("live_stateful_http_responses", it) }
-      addProperty(
-        "live_stateful_http_responses_checked_at_millis",
-        state.liveStatefulHttpResponsesCheckedAtMillis,
-      )
-      state.liveHealthError?.let { addProperty("live_health_error", it) }
       state.error?.let { addProperty("error", it) }
     }
   }
@@ -271,7 +265,6 @@ class PhoneOpenAiServerService : Service() {
     } catch (e: Exception) {
       Log.e(TAG, "Failed to bind server socket", e)
       PhoneOpenAiServerStore.setError(e.message ?: "Failed to bind server socket")
-      PhoneOpenAiServerStore.setLiveHttpSessionHealth(null, error = e.message)
       server = null
       servedModel = null
       stopServer(e.message ?: "Failed to bind server socket")

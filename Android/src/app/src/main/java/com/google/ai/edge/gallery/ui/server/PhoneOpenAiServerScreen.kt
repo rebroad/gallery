@@ -123,13 +123,6 @@ fun PhoneOpenAiServerScreen(
     } else {
       0.0f
     }
-  val liveStatefulHttpResponses = serverState.liveStatefulHttpResponses
-  val effectiveStatefulHttpResponses =
-    if (isRunning && liveStatefulHttpResponses != null) {
-      liveStatefulHttpResponses
-    } else {
-      serverState.statefulHttpResponses
-    }
   val statusText =
     when (serverState.status) {
       PhoneOpenAiServerStatus.RUNNING -> stringResource(R.string.phone_server_status_running)
@@ -505,31 +498,14 @@ fun PhoneOpenAiServerScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
               )
-            }
-            Switch(
-              checked = effectiveStatefulHttpResponses,
-              onCheckedChange = { checked ->
-                modelManagerViewModel.setPhoneServerStatefulHttpResponses(checked)
-              },
-            )
           }
-          Text(
-            text =
-              when {
-                !isRunning -> stringResource(R.string.phone_server_stateful_http_responses_hint)
-                liveStatefulHttpResponses == true -> stringResource(R.string.phone_server_stateful_http_responses_operational_on)
-                liveStatefulHttpResponses == false -> stringResource(R.string.phone_server_stateful_http_responses_operational_off)
-                else -> stringResource(R.string.phone_server_stateful_http_responses_operational_unknown)
-              },
-            style = MaterialTheme.typography.bodySmall,
-            color =
-              when (liveStatefulHttpResponses) {
-                true -> MaterialTheme.colorScheme.primary
-                false -> MaterialTheme.colorScheme.error
-                null -> MaterialTheme.colorScheme.onSurfaceVariant
-              },
+          Switch(
+            checked = serverState.statefulHttpResponses,
+            onCheckedChange = { checked ->
+              modelManagerViewModel.setPhoneServerStatefulHttpResponses(checked)
+            },
           )
-
+          }
           Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp),

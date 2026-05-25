@@ -50,9 +50,6 @@ data class PhoneOpenAiServerState(
   val statefulHttpResponses: Boolean = true,
   val maxCachedHttpSessions: Int = 4,
   val httpSessionIdleTimeoutMinutes: Int = 10,
-  val liveStatefulHttpResponses: Boolean? = null,
-  val liveStatefulHttpResponsesCheckedAtMillis: Long = 0L,
-  val liveHealthError: String? = null,
   val error: String? = null,
 ) {
   val autoStartOnAppLaunch: Boolean
@@ -120,20 +117,6 @@ object PhoneOpenAiServerStore {
     }
   }
 
-  fun setLiveHttpSessionHealth(
-    statefulHttpResponses: Boolean?,
-    checkedAtMillis: Long = System.currentTimeMillis(),
-    error: String? = null,
-  ) {
-    _state.update {
-      it.copy(
-        liveStatefulHttpResponses = statefulHttpResponses,
-        liveStatefulHttpResponsesCheckedAtMillis = checkedAtMillis,
-        liveHealthError = error,
-      )
-    }
-  }
-
   fun setLanAuthBypass(enabled: Boolean, subnetCidr: String = "") {
     allowLanNoAuth = enabled
     noAuthSubnetCidr = subnetCidr
@@ -148,9 +131,6 @@ object PhoneOpenAiServerStore {
         port = port,
         token = token,
         error = null,
-        liveStatefulHttpResponses = null,
-        liveStatefulHttpResponsesCheckedAtMillis = 0L,
-        liveHealthError = null,
       )
     }
   }
@@ -165,9 +145,6 @@ object PhoneOpenAiServerStore {
         modelName = modelName,
         allowLanNoAuth = allowLanNoAuth,
         noAuthSubnetCidr = noAuthSubnetCidr,
-        liveStatefulHttpResponses = null,
-        liveStatefulHttpResponsesCheckedAtMillis = 0L,
-        liveHealthError = null,
         error = null,
       )
     }
@@ -183,9 +160,6 @@ object PhoneOpenAiServerStore {
         status = PhoneOpenAiServerStatus.STOPPED,
         host = "",
         token = "",
-        liveStatefulHttpResponses = null,
-        liveStatefulHttpResponsesCheckedAtMillis = 0L,
-        liveHealthError = null,
         error = null,
       )
     }
